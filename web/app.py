@@ -79,7 +79,58 @@ TASK_IO_LOCK = threading.Lock()
 QUEUE_EVENT = threading.Event()
 WORKER_THREAD: threading.Thread | None = None
 WORKER_ID = "control-room-worker-1"
+SKILL_EDIT_LOCK = threading.Lock()
 
+SLIDE_STYLE_TEMPLATES: list[dict[str, Any]] = [
+    {
+        "key": "clean_academic",
+        "title": "Clean Academic",
+        "value": "clean academic beamer with figure-led slides",
+        "accent": "#126b9a",
+        "preview": {
+            "layout": "two-column",
+            "headline": "Problem, method, evidence",
+            "visual": "large OCR figure with compact bullets",
+            "notes": "Balanced overview deck for most papers.",
+        },
+    },
+    {
+        "key": "dense_methods",
+        "title": "Dense Methods",
+        "value": "dense methods-first beamer with equations, algorithms, and compact comparison tables",
+        "accent": "#6a4c93",
+        "preview": {
+            "layout": "equation-led",
+            "headline": "Model and objective first",
+            "visual": "OCR formulas and algorithm blocks",
+            "notes": "Best for theory, model architecture, and derivations.",
+        },
+    },
+    {
+        "key": "visual_results",
+        "title": "Visual Results",
+        "value": "visual results deck with large OCR figures, benchmark tables, and concise takeaways",
+        "accent": "#2f7d32",
+        "preview": {
+            "layout": "visual-first",
+            "headline": "Experiments and ablations",
+            "visual": "wide tables, figures, and charts",
+            "notes": "Best for empirical papers with many result assets.",
+        },
+    },
+    {
+        "key": "teaching_walkthrough",
+        "title": "Teaching Walkthrough",
+        "value": "teaching walkthrough beamer with progressive motivation, method intuition, and evaluation summary",
+        "accent": "#a45113",
+        "preview": {
+            "layout": "progressive",
+            "headline": "Motivation to conclusion",
+            "visual": "small diagrams plus short explanations",
+            "notes": "Best for talks aimed at mixed technical audiences.",
+        },
+    },
+]
 
 class SettingsPayload(BaseModel):
     ollama_url: str = Field(min_length=1)
@@ -105,6 +156,8 @@ class OllamaTestPayload(BaseModel):
     text_model: str = Field(min_length=1)
     vision_model: str = Field(min_length=1)
 
+class SkillsUpdatePayload(BaseModel):
+    content: str = Field(min_length=1, max_length=20000)
 
 def normalize_step_ticks(raw: dict[str, Any] | None) -> dict[str, int]:
     merged = dict(DEFAULT_STEP_TICKS)
@@ -1013,6 +1066,15 @@ def post_settings(payload: SettingsPayload) -> dict[str, Any]:
 def test_ollama(payload: OllamaTestPayload) -> dict[str, Any]:
     return probe_ollama(payload.ollama_url)
 
+@app.get("/api/ollama/models")
+def get_ollama_models() -> dict[str, Any]:
+    settings = load_settings()
+    return probe_ollama(settings["ollama_url"])
+
+
+@app.get("/api/slide-styles")
+def get_slide_styles() -> list[dict[str, Any]]:
+    return SLIDE_STYLE_TEMPLATES
 
 @app.get("/api/tool-catalog")
 def get_tool_catalog() -> list[dict[str, Any]]:
@@ -1037,6 +1099,18 @@ def get_agent_skills(agent_key: str) -> FileResponse:
     path = resolve_agent_skills_md(agent_key)
     return FileResponse(str(path), media_type="text/markdown", filename=path.name)
 
+@app.put("/api/agents/{agent_key}/skills.md")
+def update_agent_skills(agent_key: str, payload: SkillsUpdatePayload) -> dict[str, Any]:
+    path = resolve_agent_skills_md(agent_key)
+    content = payload.content.rstrip() + "\n"
+    with SKILL_EDIT_LOCK:
+        path.write_text(content, encoding="utf-8")
+    return {
+        "ok": True,
+        "agent_key": agent_key,
+        "path": str(path),
+        "bytes": len(content.encode("utf-8")),
+    }
 
 @app.get("/api/queue")
 def get_queue() -> dict[str, Any]:
@@ -1199,5 +1273,7 @@ def health() -> JSONResponse:
             "queue": queue_state(),
         }
     )
+
+
 
 

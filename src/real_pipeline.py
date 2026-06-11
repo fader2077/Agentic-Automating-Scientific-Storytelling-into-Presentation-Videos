@@ -3,14 +3,17 @@
 import argparse
 import html
 import json
+import math
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +66,28 @@ def clean_dir(path: Path) -> None:
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
+def write_fallback_reference_audio(path: Path, duration_seconds: float = 2.4, sample_rate: int = 24000) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    total_samples = int(duration_seconds * sample_rate)
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        frames = bytearray()
+        for index in range(total_samples):
+            sample = int(0.08 * 32767 * math.sin(2 * math.pi * 220 * index / sample_rate))
+            frames.extend(struct.pack("<h", sample))
+        handle.writeframes(bytes(frames))
+
+
+def ensure_reference_audio(ref_audio: str, result_dir: Path) -> Path:
+    candidate = Path(ref_audio)
+    if candidate.exists():
+        return candidate
+    fallback = result_dir / "reference_fallback.wav"
+    if not fallback.exists():
+        write_fallback_reference_audio(fallback)
+    return fallback
 
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -860,11 +885,14 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     t = time.time()
     emit_event("start", "tts", "F5TTS synthesis started.", {"engine": "F5TTS"})
     audio_dir = result_dir / "audio"
+    ref_audio_path = ensure_reference_audio(args.ref_audio, result_dir)
+    if str(ref_audio_path) != args.ref_audio:
+        emit_event("info", "tts", "Reference audio missing; generated fallback reference wav.", {"ref_audio": str(ref_audio_path)})
     tts_per_slide(
         model_type="f5",
         script_path=str(script_path),
         speech_save_dir=str(audio_dir),
-        ref_audio=args.ref_audio,
+        ref_audio=str(ref_audio_path),
         ref_text=args.ref_text,
     )
     metadata["steps"]["tts"] = {"seconds": round(time.time() - t, 3), "audio_files": len(list(audio_dir.glob("*.wav")))}
@@ -950,4 +978,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 

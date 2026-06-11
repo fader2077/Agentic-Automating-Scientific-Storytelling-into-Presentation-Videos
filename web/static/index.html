@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -27,11 +27,11 @@
           </label>
           <label>
             <span>Text Model</span>
-            <input id="text_model" name="text_model" type="text" />
+            <select id="text_model" name="text_model"></select>
           </label>
           <label>
             <span>Vision Model</span>
-            <input id="vision_model" name="vision_model" type="text" />
+            <select id="vision_model" name="vision_model"></select>
           </label>
           <div class="grid two">
             <label>
@@ -53,6 +53,7 @@
           </label>
           <div class="panel-subsection">
             <div class="subsection-title">Runtime Controls</div>
+            <p class="help-text">These controls set the count budget shown by each agent/tool stage in the monitor. Higher counts keep the visible stage open longer; real OCR, model, TTS, and render time still depends on the local runtime.</p>
             <div class="grid two compact-grid">
               <label><span>Ingest Count</span><input id="step_ticks_ingest" type="number" min="10" max="60" step="1" /></label>
               <label><span>Planner Count</span><input id="step_ticks_planner" type="number" min="10" max="60" step="1" /></label>
@@ -95,9 +96,11 @@
               </label>
               <label>
                 <span>Slide style</span>
-                <input id="preferred_slide_style" name="preferred_slide_style" type="text" value="clean academic beamer with figure-led slides" />
+                <select id="preferred_slide_style" name="preferred_slide_style"></select>
               </label>
             </div>
+            <div id="style-preview-grid" class="style-preview-grid"></div>
+
             <div class="callout">
               The run will enter the queue, then stage OCR, planning, slide drafting, narration, TTS, cursor grounding, and video composition with visible agent and tool activity.
             </div>
@@ -160,6 +163,27 @@
       </main>
     </div>
 
+
+    <div id="skills-editor" class="modal hidden" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Agent Skills</p>
+            <h2 id="skills-editor-title">Edit skills.md</h2>
+          </div>
+          <button type="button" id="skills-editor-close" class="icon-button">Close</button>
+        </div>
+        <textarea id="skills-editor-text" class="skills-editor-text" spellcheck="false"></textarea>
+        <div class="modal-actions">
+          <p id="skills-editor-status" class="status-line"></p>
+          <button type="button" id="skills-editor-save" class="primary">Save skills.md</button>
+        </div>
+      </div>
+    </div>
     <script src="/static/app.js"></script>
   </body>
 </html>
+
+
+
+

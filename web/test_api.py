@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import uuid
+import types
 from pathlib import Path
 
 os.environ["P2V_WEB_DISABLE_WORKER"] = "1"
@@ -14,6 +15,25 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+
+if "whisperx" not in sys.modules:
+    whisperx_stub = types.ModuleType("whisperx")
+    whisperx_stub.load_model = lambda *args, **kwargs: None
+    whisperx_stub.load_align_model = lambda *args, **kwargs: (None, None)
+    whisperx_stub.align = lambda *args, **kwargs: {"segments": []}
+    sys.modules["whisperx"] = whisperx_stub
+
+if "f5_tts.api" not in sys.modules:
+    f5_pkg = types.ModuleType("f5_tts")
+    f5_api = types.ModuleType("f5_tts.api")
+
+    class F5TTSStub:
+        def infer(self, *args, **kwargs):
+            return None
+
+    f5_api.F5TTS = F5TTSStub
+    sys.modules["f5_tts"] = f5_pkg
+    sys.modules["f5_tts.api"] = f5_api
 from web.app import (
     CreateTaskPayload,
     apply_pipeline_event,
@@ -22,9 +42,11 @@ from web.app import (
     finalize_task_artifacts,
     initialize_task_runtime,
     load_settings,
+    resolve_agent_skills_md,
     write_task,
 )
 
+from src.real_pipeline import ensure_reference_audio
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
@@ -105,6 +127,8 @@ def main() -> None:
     metadata = write_fixture_result(fixture_dir)
     task_id = "test-" + uuid.uuid4().hex
     upload_id = None
+    speech_skills_path = resolve_agent_skills_md("SpeechAgent")
+    speech_skills_bytes = speech_skills_path.read_bytes()
 
     try:
         with TestClient(app) as client:
@@ -147,6 +171,15 @@ def main() -> None:
             )
             assert ollama.status_code == 200
             assert ollama.json()["ok"] is True
+            models = client.get("/api/ollama/models")
+            assert models.status_code == 200
+            assert "models" in models.json()
+
+            styles = client.get("/api/slide-styles")
+            assert styles.status_code == 200
+            styles_payload = styles.json()
+            assert len(styles_payload) >= 3
+            assert all(item.get("key") and item.get("title") and item.get("value") and item.get("preview") for item in styles_payload)
 
             catalog = client.get("/api/tool-catalog")
             assert catalog.status_code == 200
@@ -166,6 +199,19 @@ def main() -> None:
             skills = client.get("/api/agents/SpeechAgent/skills.md")
             assert skills.status_code == 200
             assert "F5TTS synthesis" in skills.text
+            original_skills = skills.text
+            edited_skills = original_skills.rstrip() + "\n\n<!-- api edit roundtrip -->\n"
+            update_skills = client.put("/api/agents/SpeechAgent/skills.md", json={"content": edited_skills})
+            assert update_skills.status_code == 200
+            assert update_skills.json()["ok"] is True
+            assert "api edit roundtrip" in client.get("/api/agents/SpeechAgent/skills.md").text
+            restore_skills = client.put("/api/agents/SpeechAgent/skills.md", json={"content": original_skills})
+            assert restore_skills.status_code == 200
+
+            fallback_ref = ensure_reference_audio(str(fixture_dir / "missing_reference.wav"), fixture_dir)
+            assert fallback_ref.exists()
+            assert fallback_ref.name == "reference_fallback.wav"
+
 
             upload = client.post(
                 "/api/upload",
@@ -243,9 +289,19 @@ def main() -> None:
         if upload_id:
             for upload_file in (ROOT / "web" / "data" / "uploads").glob(f"{upload_id}.*"):
                 upload_file.unlink(missing_ok=True)
+        speech_skills_path.write_bytes(speech_skills_bytes)
         if fixture_dir.exists():
             shutil.rmtree(fixture_dir)
 
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
+
+
+
