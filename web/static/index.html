@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Control Room</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="topbar-title">Control Room</div>
+      <nav class="topbar-nav">
+        <a class="active" href="/">Run</a>
+        <a href="/history">Task History</a>
+      </nav>
+    </div>
+    <div class="shell">
+      <aside class="panel settings">
+        <div class="panel-header">
+          <p class="eyebrow">Pipeline Settings</p>
+          <h1>Control Room</h1>
+        </div>
+        <form id="settings-form" class="stack">
+          <label>
+            <span>Ollama URL</span>
+            <input id="ollama_url" name="ollama_url" type="url" />
+          </label>
+          <label>
+            <span>Text Model</span>
+            <input id="text_model" name="text_model" type="text" />
+          </label>
+          <label>
+            <span>Vision Model</span>
+            <input id="vision_model" name="vision_model" type="text" />
+          </label>
+          <div class="grid two">
+            <label>
+              <span>Temperature</span>
+              <input id="temperature" name="temperature" type="number" min="0" max="2" step="0.05" />
+            </label>
+            <label>
+              <span>Top P</span>
+              <input id="top_p" name="top_p" type="number" min="0" max="1" step="0.05" />
+            </label>
+          </div>
+          <label>
+            <span>Max Tokens</span>
+            <input id="max_tokens" name="max_tokens" type="number" min="256" max="32768" step="256" />
+          </label>
+          <label>
+            <span>System Prompt</span>
+            <textarea id="system_prompt" name="system_prompt" rows="6"></textarea>
+          </label>
+          <div class="panel-subsection">
+            <div class="subsection-title">Runtime Controls</div>
+            <div class="grid two compact-grid">
+              <label><span>Ingest Count</span><input id="step_ticks_ingest" type="number" min="10" max="60" step="1" /></label>
+              <label><span>Planner Count</span><input id="step_ticks_planner" type="number" min="10" max="60" step="1" /></label>
+              <label><span>Slides Count</span><input id="step_ticks_slides" type="number" min="10" max="60" step="1" /></label>
+              <label><span>Script Count</span><input id="step_ticks_script" type="number" min="10" max="60" step="1" /></label>
+              <label><span>TTS Count</span><input id="step_ticks_tts" type="number" min="10" max="60" step="1" /></label>
+              <label><span>Cursor Count</span><input id="step_ticks_cursor" type="number" min="10" max="60" step="1" /></label>
+              <label><span>Compose Count</span><input id="step_ticks_compose" type="number" min="10" max="60" step="1" /></label>
+            </div>
+          </div>
+          <div class="actions">
+            <button type="button" id="test-ollama">Check Ollama</button>
+            <button type="submit" class="primary">Save Settings</button>
+          </div>
+          <p id="settings-status" class="status-line"></p>
+          <div id="gpu-status" class="status-card">GPU status pending.</div>
+        </form>
+      </aside>
+
+      <main class="workspace">
+        <section class="panel ingest">
+          <div class="panel-header">
+            <p class="eyebrow">Source Intake</p>
+            <h2>Queue a presentation video run</h2>
+          </div>
+          <form id="task-form" class="stack">
+            <label class="upload-box">
+              <span>Upload paper PDF or archive</span>
+              <input id="paper_file" name="paper_file" type="file" accept=".pdf,.zip,.tex,.tar,.gz" />
+            </label>
+            <div id="upload-status" class="status-card">No upload yet.</div>
+            <label>
+              <span>Presentation instruction</span>
+              <textarea id="goal_prompt" name="goal_prompt" rows="4" placeholder="Example: create a 12-slide academic deck with a concise method walkthrough and a strong experiments section."></textarea>
+            </label>
+            <div class="grid two">
+              <label>
+                <span>Target length (minutes)</span>
+                <input id="desired_minutes" name="desired_minutes" type="number" min="1" max="20" value="6" />
+              </label>
+              <label>
+                <span>Slide style</span>
+                <input id="preferred_slide_style" name="preferred_slide_style" type="text" value="clean academic beamer with figure-led slides" />
+              </label>
+            </div>
+            <div class="callout">
+              The run will enter the queue, then stage OCR, planning, slide drafting, narration, TTS, cursor grounding, and video composition with visible agent and tool activity.
+            </div>
+            <div class="actions">
+              <button type="submit" class="primary">Queue Pipeline</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel monitor">
+          <div class="panel-header">
+            <p class="eyebrow">Background Agents</p>
+            <h2>Task monitor</h2>
+          </div>
+          <div class="monitor-top">
+            <div>
+              <p id="task-meta" class="status-line">No task started.</p>
+              <div class="progress-bar">
+                <div id="progress-fill"></div>
+              </div>
+            </div>
+            <div class="status-pill" id="task-status-pill">idle</div>
+          </div>
+          <div id="queue-summary" class="queue-strip">Queue is idle.</div>
+          <div id="steps" class="steps"></div>
+          <div class="log-shell">
+            <div class="log-title">Execution log</div>
+            <pre id="task-log"></pre>
+          </div>
+        </section>
+
+        <section class="panel tools-panel">
+          <div class="panel-header">
+            <p class="eyebrow">Agents, Skills, Tools</p>
+            <h2>Runtime capabilities</h2>
+          </div>
+          <div id="agent-catalog" class="agent-catalog"></div>
+          <div id="tool-catalog" class="tool-catalog"></div>
+        </section>
+
+        <section class="panel ocr-panel">
+          <div class="panel-header">
+            <p class="eyebrow">MinerU OCR Extraction</p>
+            <h2>Figures, tables, charts, and formulas</h2>
+          </div>
+          <div id="ocr-summary" class="status-card">No OCR assets loaded.</div>
+          <div id="ocr-assets" class="ocr-assets"></div>
+        </section>
+
+        <section class="panel output">
+          <div class="panel-header">
+            <p class="eyebrow">Output Preview</p>
+            <h2>Video handoff</h2>
+          </div>
+          <video id="sample-video" controls preload="metadata" poster="">
+            <source src="/api/sample-video" type="video/mp4" />
+          </video>
+          <div id="artifact-links" class="artifact-links"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

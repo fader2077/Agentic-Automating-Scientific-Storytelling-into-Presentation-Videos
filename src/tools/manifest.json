@@ -1,0 +1,162 @@
+[
+  {
+    "key": "pdf_manifest",
+    "title": "PDF Manifest Reader",
+    "kind": "document",
+    "entrypoint": "web.app.upload_paper",
+    "purpose": "Read uploaded paper metadata and saved file path.",
+    "inputs": ["UploadFile"],
+    "outputs": ["upload metadata JSON"],
+    "uses_gpu": false
+  },
+  {
+    "key": "ocr_router",
+    "title": "MinerU OCR Router",
+    "kind": "ocr",
+    "entrypoint": "src.real_pipeline.run_mineru",
+    "purpose": "Run MinerU OCR and collect markdown plus structured content JSON.",
+    "inputs": ["paper PDF", "result directory", "OCR method"],
+    "outputs": ["OCR markdown", "content_list JSON", "layout assets"],
+    "uses_gpu": true
+  },
+  {
+    "key": "ocr_asset_manifest",
+    "title": "OCR Asset Manifest",
+    "kind": "ocr",
+    "entrypoint": "src.real_pipeline.build_ocr_assets",
+    "purpose": "Normalize MinerU images, charts, tables, equations, and code blocks for slides and web inspection.",
+    "inputs": ["content_list JSON", "latex project directory"],
+    "outputs": ["ocr_assets.json", "copied image assets"],
+    "uses_gpu": false
+  },
+  {
+    "key": "section_planner",
+    "title": "Section Planner",
+    "kind": "planning",
+    "entrypoint": "src.real_pipeline.build_deck_prompt",
+    "purpose": "Prepare the slide planning prompt and pacing constraints.",
+    "inputs": ["OCR markdown", "goal prompt", "desired minutes"],
+    "outputs": ["Ollama planning prompt"],
+    "uses_gpu": false
+  },
+  {
+    "key": "ollama_dispatch",
+    "title": "Ollama Dispatch",
+    "kind": "model",
+    "entrypoint": "src.real_pipeline.ollama_generate",
+    "purpose": "Call local Ollama model qwen3.6:27b for real slide planning.",
+    "inputs": ["planning prompt", "model settings"],
+    "outputs": ["raw model JSON response"],
+    "uses_gpu": true
+  },
+  {
+    "key": "beamer_writer",
+    "title": "Beamer Writer",
+    "kind": "slides",
+    "entrypoint": "src.real_pipeline.write_beamer",
+    "purpose": "Generate Beamer LaTeX and place OCR visual assets into slide frames.",
+    "inputs": ["plan JSON", "OCR assets"],
+    "outputs": ["slides.tex"],
+    "uses_gpu": false
+  },
+  {
+    "key": "figure_grounder",
+    "title": "Figure Grounder",
+    "kind": "slides",
+    "entrypoint": "src.real_pipeline.select_visual_asset",
+    "purpose": "Select OCR figures, tables, charts, or equations for slide grounding.",
+    "inputs": ["slide plan", "OCR asset manifest"],
+    "outputs": ["selected visual asset"],
+    "uses_gpu": false
+  },
+  {
+    "key": "slide_renderer",
+    "title": "Slide Renderer",
+    "kind": "render",
+    "entrypoint": "src.real_pipeline.render_slide_images",
+    "purpose": "Render compiled Beamer PDF pages to PNG frames.",
+    "inputs": ["slides.pdf"],
+    "outputs": ["slide_imgs/*.png"],
+    "uses_gpu": false
+  },
+  {
+    "key": "script_planner",
+    "title": "Script Planner",
+    "kind": "narration",
+    "entrypoint": "src.real_pipeline.write_script",
+    "purpose": "Generate slide-level narration with cursor hints.",
+    "inputs": ["plan JSON"],
+    "outputs": ["subtitle_w_cursor.txt"],
+    "uses_gpu": false
+  },
+  {
+    "key": "subtitle_aligner",
+    "title": "Subtitle Aligner",
+    "kind": "narration",
+    "entrypoint": "src.real_pipeline.build_srt_from_script",
+    "purpose": "Convert narration and audio durations into SRT subtitles.",
+    "inputs": ["subtitle_w_cursor.txt", "audio directory"],
+    "outputs": ["subtitles.srt"],
+    "uses_gpu": false
+  },
+  {
+    "key": "voice_profiler",
+    "title": "Voice Profiler",
+    "kind": "speech",
+    "entrypoint": "src.speech_gen.tts_per_slide",
+    "purpose": "Load reference audio and text for F5TTS voice conditioning.",
+    "inputs": ["reference wav", "reference text"],
+    "outputs": ["voice-conditioned TTS state"],
+    "uses_gpu": true
+  },
+  {
+    "key": "f5_queue",
+    "title": "F5 Queue",
+    "kind": "speech",
+    "entrypoint": "src.speech_gen.tts_per_slide",
+    "purpose": "Synthesize per-slide narration using F5TTS.",
+    "inputs": ["subtitle_w_cursor.txt", "reference voice"],
+    "outputs": ["audio/*.wav"],
+    "uses_gpu": true
+  },
+  {
+    "key": "layout_inspector",
+    "title": "Layout Inspector",
+    "kind": "grounding",
+    "entrypoint": "src.cursor_gen.get_slide_size",
+    "purpose": "Read slide dimensions and basic layout anchors for cursor routing.",
+    "inputs": ["slide image directory"],
+    "outputs": ["slide width and height"],
+    "uses_gpu": false
+  },
+  {
+    "key": "cursor_router",
+    "title": "Cursor Router",
+    "kind": "grounding",
+    "entrypoint": "src.cursor_gen.cursor_gen_per_sentence",
+    "purpose": "Create a timed cursor path from narration hints and slide/audio timing.",
+    "inputs": ["subtitle_w_cursor.txt", "slide images", "audio files"],
+    "outputs": ["cursor.json", "cursor_mid.json"],
+    "uses_gpu": false
+  },
+  {
+    "key": "ffmpeg_packager",
+    "title": "FFmpeg Packager",
+    "kind": "render",
+    "entrypoint": "src.real_pipeline.build_page_clips",
+    "purpose": "Assemble slide frames, audio, cursor overlay, and subtitles into MP4.",
+    "inputs": ["slide images", "audio files", "cursor JSON", "SRT subtitles"],
+    "outputs": ["1_merage.mp4", "2_merage.mp4", "3_merage.mp4"],
+    "uses_gpu": false
+  },
+  {
+    "key": "mp4_verifier",
+    "title": "MP4 Verifier",
+    "kind": "render",
+    "entrypoint": "src.real_pipeline.ffprobe_duration",
+    "purpose": "Verify final MP4 duration and media availability.",
+    "inputs": ["3_merage.mp4"],
+    "outputs": ["duration metadata"],
+    "uses_gpu": false
+  }
+]

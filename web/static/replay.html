@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Task Replay</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="topbar-title">Control Room</div>
+      <nav class="topbar-nav">
+        <a href="/">Run</a>
+        <a href="/history">Task History</a>
+      </nav>
+    </div>
+    <main class="replay-shell">
+      <section class="panel replay-panel">
+        <div class="panel-header">
+          <p class="eyebrow">Timeline Replay</p>
+          <h1 id="replay-title">Loading task...</h1>
+        </div>
+        <div class="replay-toolbar">
+          <button id="replay-first">First</button>
+          <button id="replay-prev">Prev</button>
+          <button id="replay-next">Next</button>
+          <button id="replay-last">Last</button>
+          <span id="replay-position" class="status-pill">0 / 0</span>
+        </div>
+        <div id="replay-summary" class="queue-strip">Loading timeline...</div>
+        <div class="replay-layout">
+          <div>
+            <div id="replay-steps" class="steps"></div>
+          </div>
+          <aside class="panel replay-side">
+            <div class="panel-header">
+              <p class="eyebrow">Snapshot</p>
+              <h2 id="snapshot-label">No snapshot</h2>
+            </div>
+            <div id="snapshot-meta" class="status-card"></div>
+            <div class="log-shell">
+              <div class="log-title">Recent calls</div>
+              <pre id="snapshot-calls"></pre>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </main>
+    <script src="/static/replay.js"></script>
+  </body>
+</html>

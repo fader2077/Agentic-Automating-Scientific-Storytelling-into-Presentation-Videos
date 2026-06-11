@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Task History</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="topbar">
+      <div class="topbar-title">Control Room</div>
+      <nav class="topbar-nav">
+        <a href="/">Run</a>
+        <a class="active" href="/history">Task History</a>
+      </nav>
+    </div>
+    <main class="history-shell">
+      <section class="panel">
+        <div class="panel-header">
+          <p class="eyebrow">Queue</p>
+          <h1>Task history</h1>
+        </div>
+        <div id="history-queue" class="queue-strip">Loading queue state...</div>
+        <div id="history-list" class="history-list"></div>
+      </section>
+    </main>
+    <script src="/static/history.js"></script>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "ollama_url": "http://127.0.0.1:11434",
+  "text_model": "qwen3.6:27b",
+  "vision_model": "qwen2.5vl:latest",
+  "temperature": 0.2,
+  "top_p": 0.9,
+  "max_tokens": 8192,
+  "system_prompt": "Coordinate a real academic presentation-video pipeline with faithful paper coverage.",
+  "tick_seconds": 1,
+  "step_ticks": {
+    "ingest": 16,
+    "planner": 18,
+    "slides": 22,
+    "script": 18,
+    "tts": 20,
+    "cursor": 16,
+    "compose": 18
+  }
+}

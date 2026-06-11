@@ -1,0 +1,22 @@
+﻿.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime data and generated media
+result/
+web/data/uploads/
+web/data/tasks/
+web/server*.log
+*.log
+
+# Local models/assets supplied by operator
+assets/demo/*.wav
+assets/demo/*.mp3
+assets/demo/*.png
+
+# Large local paper inputs
+*.pdf
+!docs/**/*.pdf

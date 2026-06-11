@@ -1,0 +1,10 @@
+﻿fastapi
+uvicorn
+pydantic
+pymupdf
+python-multipart
+requests
+numpy
+torch
+torchaudio
+f5-tts

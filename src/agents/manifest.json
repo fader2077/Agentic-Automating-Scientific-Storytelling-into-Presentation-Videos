@@ -1,0 +1,58 @@
+[
+  {
+    "key": "IngestionAgent",
+    "title": "Ingestion Agent",
+    "stage": "ingest",
+    "skills_md": "IngestionAgent/skills.md",
+    "skills": ["PDF intake", "MinerU OCR", "layout inventory", "OCR asset extraction"],
+    "tools": ["pdf_manifest", "ocr_router", "ocr_asset_manifest"]
+  },
+  {
+    "key": "PlannerAgent",
+    "title": "Planner Agent",
+    "stage": "planner",
+    "skills_md": "PlannerAgent/skills.md",
+    "skills": ["paper summarization", "talk pacing", "section allocation", "local Ollama planning"],
+    "tools": ["section_planner", "ollama_dispatch"]
+  },
+  {
+    "key": "SlideBuilderAgent",
+    "title": "Slide Builder Agent",
+    "stage": "slides",
+    "skills_md": "SlideBuilderAgent/skills.md",
+    "skills": ["Beamer generation", "OCR visual grounding", "table placement", "figure placement"],
+    "tools": ["beamer_writer", "figure_grounder", "slide_renderer"]
+  },
+  {
+    "key": "ScriptAgent",
+    "title": "Script Agent",
+    "stage": "script",
+    "skills_md": "ScriptAgent/skills.md",
+    "skills": ["speaker notes", "subtitle chunks", "cursor hints", "pacing control"],
+    "tools": ["script_planner", "subtitle_aligner"]
+  },
+  {
+    "key": "SpeechAgent",
+    "title": "Speech Agent",
+    "stage": "tts",
+    "skills_md": "SpeechAgent/skills.md",
+    "skills": ["voice conditioning", "F5TTS synthesis", "per-slide audio packaging"],
+    "tools": ["voice_profiler", "f5_queue"]
+  },
+  {
+    "key": "GroundingAgent",
+    "title": "Grounding Agent",
+    "stage": "cursor",
+    "skills_md": "GroundingAgent/skills.md",
+    "skills": ["slide region reading", "cursor trajectory", "timing alignment"],
+    "tools": ["layout_inspector", "cursor_router"]
+  },
+  {
+    "key": "RenderAgent",
+    "title": "Render Agent",
+    "stage": "compose",
+    "skills_md": "RenderAgent/skills.md",
+    "skills": ["ffmpeg composition", "subtitle burn-in", "MP4 verification", "artifact handoff"],
+    "tools": ["ffmpeg_packager", "mp4_verifier"]
+  }
+]
