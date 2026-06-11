@@ -1,11 +1,29 @@
 import os
 import torch
-import whisperx
 from os import path
-from f5_tts.api import F5TTS
+
+
+def load_whisperx():
+    try:
+        import whisperx
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "whisperx is required only when ref_text is missing. "
+            "Install whisperx or provide --ref_text."
+        ) from exc
+    return whisperx
+
+
+def load_f5tts_class():
+    try:
+        from f5_tts.api import F5TTS
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("f5_tts is required for model_type='f5'. Install F5TTS in the pipeline Python environment.") from exc
+    return F5TTS
 
 
 def transcribe_with_whisperx(audio_path, lang="en", device="cuda" if torch.cuda.is_available() else "cpu"):
+    whisperx = load_whisperx()
     print(f"Using device: {device}")
     model = whisperx.load_model("large-v2", device=device, compute_type="float16" if device == "cuda" else "int8")
     result = model.transcribe(audio_path, language=lang)
@@ -16,6 +34,7 @@ def transcribe_with_whisperx(audio_path, lang="en", device="cuda" if torch.cuda.
     return text
 
 def inference_f5(text_prompt, save_path, ref_audio, ref_text, f5tts=None):
+    F5TTS = load_f5tts_class()
     synthesizer = f5tts or F5TTS()
     synthesizer.infer(
         ref_file=ref_audio,
@@ -48,6 +67,7 @@ def tts_per_slide(model_type, script_path, speech_save_dir, ref_audio, ref_text=
     if ref_text is None:
         ref_text = transcribe_with_whisperx(ref_audio)
 
+    F5TTS = load_f5tts_class() if model_type == "f5" else None
     f5tts = F5TTS() if model_type == "f5" else None
     
     for slide_idx in range(len(parsed_speech)):

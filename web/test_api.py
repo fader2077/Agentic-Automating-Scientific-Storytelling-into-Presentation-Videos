@@ -43,6 +43,7 @@ from web.app import (
     initialize_task_runtime,
     load_settings,
     resolve_agent_skills_md,
+    resolve_pipeline_python,
     write_task,
 )
 
@@ -137,6 +138,8 @@ def main() -> None:
             health_payload = health.json()
             assert health_payload["ollama_url"] == "http://127.0.0.1:11434"
             assert health_payload["gpu"]["cuda_available"] is True
+            assert Path(health_payload["pipeline_python"]).exists()
+            assert resolve_pipeline_python().exists()
 
             settings = {
                 "ollama_url": "http://127.0.0.1:11434",

@@ -71,6 +71,15 @@ Install these on the local machine:
 - ffmpeg and ffprobe
 - LaTeX distribution with `pdflatex`
 
+The web worker chooses the pipeline Python in this order:
+
+1. `P2V_PIPELINE_PYTHON` environment variable, if set.
+2. Repository `.venv\Scripts\python.exe`, if present.
+3. Existing local runtime `D:\Paper2Video要變牛牛\.venv\Scripts\python.exe`, if present.
+4. The Python executable that started FastAPI.
+
+For real TTS runs, use a Python environment with `whisperx` and `f5_tts` installed. `whisperx` is only needed when `--ref_text` is missing; F5TTS is needed for speech synthesis.
+
 The preferred reference voice path is:
 
 ```text

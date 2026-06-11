@@ -39,7 +39,10 @@ PIPELINE_STEP_MAP = {
     "cursor": "cursor",
     "video": "compose",
 }
-PIPELINE_PYTHON = ROOT.parent / ".venv" / "Scripts" / "python.exe"
+PIPELINE_PYTHON_CANDIDATES = [
+    ROOT.parent / ".venv" / "Scripts" / "python.exe",
+    Path("D:/Paper2Video要變牛牛/.venv/Scripts/python.exe"),
+]
 PIPELINE_SCRIPT = ROOT.parent / "src" / "real_pipeline.py"
 AGENTS_DIR = ROOT.parent / "src" / "agents"
 AGENTS_MANIFEST = AGENTS_DIR / "manifest.json"
@@ -308,6 +311,17 @@ def gpu_status() -> dict[str, Any]:
         }
     except Exception as exc:
         return {"cuda_available": False, "error": str(exc)}
+
+
+def resolve_pipeline_python() -> Path:
+    env_python = os.environ.get("P2V_PIPELINE_PYTHON")
+    candidates = [Path(env_python)] if env_python else []
+    candidates.extend(PIPELINE_PYTHON_CANDIDATES)
+    candidates.append(Path(sys.executable))
+    for candidate in candidates:
+        if candidate and candidate.exists():
+            return candidate
+    return Path(sys.executable)
 
 
 def build_tool(
@@ -845,7 +859,7 @@ def finalize_task_artifacts(task: dict[str, Any], metadata: dict[str, Any]) -> N
 
 def build_pipeline_command(task: dict[str, Any]) -> list[str]:
     settings = task["settings"]
-    python_exe = str(PIPELINE_PYTHON if PIPELINE_PYTHON.exists() else Path(sys.executable))
+    python_exe = str(resolve_pipeline_python())
     ref_audio = ROOT.parent / "assets" / "demo" / "reference.wav"
     ref_text = (
         "to experts to discuss about sports and politics. Now imagine a show runs 24-7, "
@@ -1270,6 +1284,7 @@ def health() -> JSONResponse:
             "task_count": len(list(TASK_DIR.glob("*.json"))),
             "ollama_url": settings["ollama_url"],
             "gpu": gpu_status(),
+            "pipeline_python": str(resolve_pipeline_python()),
             "queue": queue_state(),
         }
     )
