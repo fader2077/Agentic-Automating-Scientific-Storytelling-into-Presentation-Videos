@@ -2,6 +2,7 @@
 import json
 import os
 import shutil
+import subprocess
 import sys
 import uuid
 import types
@@ -47,7 +48,8 @@ from web.app import (
     write_task,
 )
 
-from src.real_pipeline import ensure_cursor_image, ensure_reference_audio
+from src.cursor_render import render_video_with_cursor_from_json
+from src.real_pipeline import ensure_reference_audio
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
@@ -224,9 +226,32 @@ def main() -> None:
             fallback_ref = ensure_reference_audio(str(fixture_dir / "missing_reference.wav"), fixture_dir)
             assert fallback_ref.exists()
             assert fallback_ref.suffix == ".wav"
-            cursor_image = ensure_cursor_image(fixture_dir / "cursor_red.png")
-            assert cursor_image.exists()
-            assert cursor_image.stat().st_size > 0
+            cursor_input = fixture_dir / "cursor_input.mp4"
+            cursor_output = fixture_dir / "cursor_output.mp4"
+            cursor_json = fixture_dir / "cursor_overlay.json"
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=white:s=320x180:d=1",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=channel_layout=stereo:sample_rate=44100",
+                    "-shortest",
+                    str(cursor_input),
+                ],
+                check=True,
+            )
+            cursor_json.write_text(json.dumps([{"start": 0.0, "cursor": [160, 90]}]), encoding="utf-8")
+            render_video_with_cursor_from_json(str(cursor_input), str(cursor_output), str(cursor_json), cursor_size=12)
+            assert cursor_output.exists()
+            assert cursor_output.stat().st_size > 0
 
 
             upload = client.post(

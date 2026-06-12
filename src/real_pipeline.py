@@ -118,14 +118,6 @@ def resolve_reference_voice(ref_audio: str, ref_text: str | None, result_dir: Pa
     return fallback, ref_text or "Reference voice for generated academic narration."
 
 
-def ensure_cursor_image(cursor_img: Path) -> Path:
-    source = SRC / "cursor_image" / "red.png"
-    cursor_img.parent.mkdir(parents=True, exist_ok=True)
-    if not source.exists():
-        raise PipelineError(f"Cursor image asset missing: {source}")
-    shutil.copyfile(source, cursor_img)
-    return cursor_img
-
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -1021,8 +1013,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     emit_event("start", "video", "Video composition started.", {})
     srt_path = result_dir / "subtitles.srt"
     build_srt_from_script(script_path, audio_dir, srt_path)
-    cursor_img = result_dir / "cursor_red.png"
-    ensure_cursor_image(cursor_img)
     merged = build_page_clips(result_dir, slide_count)
     with_cursor = result_dir / "2_merage.mp4"
     try:
@@ -1030,7 +1020,6 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             video_path=str(merged),
             out_video_path=str(with_cursor),
             json_path=str(cursor_path),
-            cursor_img_path=str(cursor_img),
             transition_duration=0.1,
             cursor_size=14,
         )

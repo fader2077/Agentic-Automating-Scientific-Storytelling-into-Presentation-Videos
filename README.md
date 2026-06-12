@@ -105,7 +105,7 @@ assets/demo/reference.wav
 
 If that file is missing, `src/real_pipeline.py` creates `reference_fallback.wav` inside the job result directory so F5TTS does not fail with `FileNotFoundError`. Voice quality is better when a real reference wav and matching transcript are provided.
 
-The cursor overlay asset is a required repository file at `src/cursor_image/red.png`. If it is missing, the pipeline fails fast instead of fabricating a replacement.
+Cursor overlay does not require a repository image asset. `src/cursor_render.py` draws the cursor directly with an ffmpeg `drawbox` filter from `cursor.json`.
 
 After F5TTS synthesis, the pipeline measures total narration duration and applies ffmpeg `atempo` normalization when needed so the final MP4 stays close to the requested target minutes.
 
