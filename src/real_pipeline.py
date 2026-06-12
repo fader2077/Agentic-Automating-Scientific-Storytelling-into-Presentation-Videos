@@ -25,9 +25,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from cursor_router import cursor_gen_per_sentence
-from cursor_overlay import render_video_with_cursor_from_json
-from speech_synth import tts_per_slide
+from cursor_router import build_cursor_timeline
+from cursor_overlay import render_cursor_overlay_timeline
+from speech_synth import synthesize_slide_audio
 
 
 DEFAULT_MODEL = "qwen3.6:27b"
@@ -257,6 +257,42 @@ def plain_text(value: Any) -> str:
     return text.strip()
 
 
+UNICODE_LATEX_MAP = {
+    "\u00a0": " ",
+    "\u03b1": "alpha",
+    "\u03b2": "beta",
+    "\u03b3": "gamma",
+    "\u03b4": "delta",
+    "\u03bb": "lambda",
+    "\u03bc": "mu",
+    "\u03c3": "sigma",
+    "\u03c4": "tau",
+    "\u03c6": "phi",
+    "\u03c8": "psi",
+    "\u03c9": "omega",
+    "\u0394": "Delta",
+    "\u2010": "-",
+    "\u2011": "-",
+    "\u2012": "-",
+    "\u2013": "--",
+    "\u2014": "---",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u2026": "...",
+}
+
+
+def normalize_latex_text(value: Any) -> str:
+    text = plain_text(value)
+    for source, target in UNICODE_LATEX_MAP.items():
+        text = text.replace(source, target)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
 def build_ocr_assets(content_json: Path, latex_dir: Path, manifest_path: Path) -> list[dict[str, Any]]:
     if not content_json.exists() or content_json.suffix.lower() != ".json":
         write_json(manifest_path, {"assets": [], "counts": {}})
@@ -275,7 +311,7 @@ def build_ocr_assets(content_json: Path, latex_dir: Path, manifest_path: Path) -
         if kind not in supported:
             continue
         counts[kind] = counts.get(kind, 0) + 1
-        caption = plain_text(
+        caption = normalize_latex_text(
             item.get("image_caption")
             or item.get("table_caption")
             or item.get("chart_caption")
@@ -300,7 +336,7 @@ def build_ocr_assets(content_json: Path, latex_dir: Path, manifest_path: Path) -
                 "page": int(item.get("page_idx", 0)) + 1,
                 "caption": caption[:500],
                 "image": copied_path,
-                "body": plain_text(item.get("table_body") or item.get("code_body") or item.get("content"))[:1000],
+                "body": normalize_latex_text(item.get("table_body") or item.get("code_body") or item.get("content"))[:1000],
             }
         )
 
@@ -472,6 +508,7 @@ def validate_plan(plan: dict[str, Any], desired_minutes: int) -> dict[str, Any]:
 
 
 def tex_escape(text: str) -> str:
+    text = normalize_latex_text(text)
     replacements = {
         "\\": r"\textbackslash{}",
         "&": r"\&",
@@ -981,7 +1018,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     ref_audio_path, ref_text = resolve_reference_voice(args.ref_audio, args.ref_text, result_dir)
     if str(ref_audio_path) != args.ref_audio:
         emit_event("info", "tts", "Reference audio missing; using fallback reference voice.", {"ref_audio": str(ref_audio_path)})
-    tts_per_slide(
+    synthesize_slide_audio(
         model_type="f5",
         script_path=str(script_path),
         speech_save_dir=str(audio_dir),
@@ -999,7 +1036,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     t = time.time()
     emit_event("start", "cursor", "Cursor grounding started.", {})
     cursor_path = result_dir / "cursor.json"
-    cursor_gen_per_sentence(
+    build_cursor_timeline(
         script_path=str(script_path),
         slide_img_dir=str(result_dir / "slide_imgs"),
         slide_audio_dir=str(audio_dir),
@@ -1016,7 +1053,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     merged = build_page_clips(result_dir, slide_count)
     with_cursor = result_dir / "2_merage.mp4"
     try:
-        render_video_with_cursor_from_json(
+        render_cursor_overlay_timeline(
             video_path=str(merged),
             out_video_path=str(with_cursor),
             json_path=str(cursor_path),

@@ -48,7 +48,7 @@ from web.app import (
     write_task,
 )
 
-from src.cursor_overlay import render_video_with_cursor_from_json
+from src.cursor_overlay import render_cursor_overlay_timeline
 from src.real_pipeline import ensure_reference_audio
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
@@ -249,7 +249,7 @@ def main() -> None:
                 check=True,
             )
             cursor_json.write_text(json.dumps([{"start": 0.0, "cursor": [160, 90]}]), encoding="utf-8")
-            render_video_with_cursor_from_json(str(cursor_input), str(cursor_output), str(cursor_json), cursor_size=12)
+            render_cursor_overlay_timeline(str(cursor_input), str(cursor_output), str(cursor_json), cursor_size=12)
             assert cursor_output.exists()
             assert cursor_output.stat().st_size > 0
 

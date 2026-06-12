@@ -196,7 +196,7 @@ def sorted_audio_files(slide_audio_dir):
     return [path.join(slide_audio_dir, name) for name in files]
 
 
-def cursor_gen_per_sentence(
+def build_cursor_timeline(
     script_path,
     slide_img_dir,
     slide_audio_dir,
@@ -295,3 +295,19 @@ def cursor_gen_per_sentence(
 
     # Original function returns token usage estimate.
     return 0
+
+
+def cursor_gen_per_sentence(
+    script_path,
+    slide_img_dir,
+    slide_audio_dir,
+    cursor_save_path,
+    gpu_list=None,
+):
+    return build_cursor_timeline(
+        script_path=script_path,
+        slide_img_dir=slide_img_dir,
+        slide_audio_dir=slide_audio_dir,
+        cursor_save_path=cursor_save_path,
+        gpu_list=gpu_list,
+    )

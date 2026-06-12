@@ -135,7 +135,7 @@ def render_cursor_on_video(
     )
 
 
-def render_video_with_cursor_from_json(
+def render_cursor_overlay_timeline(
     video_path: str,
     out_video_path: str,
     json_path: str,
@@ -156,6 +156,24 @@ def render_video_with_cursor_from_json(
         input_video=video_path,
         output_video=out_video_path,
         cursor_points=cursor_points,
+        transition_duration=transition_duration,
+        cursor_size=cursor_size,
+    )
+
+
+def render_video_with_cursor_from_json(
+    video_path: str,
+    out_video_path: str,
+    json_path: str,
+    cursor_img_path: str | None = None,
+    transition_duration: float = 0.1,
+    cursor_size: int = 16,
+) -> None:
+    return render_cursor_overlay_timeline(
+        video_path=video_path,
+        out_video_path=out_video_path,
+        json_path=json_path,
+        cursor_img_path=cursor_img_path,
         transition_duration=transition_duration,
         cursor_size=cursor_size,
     )

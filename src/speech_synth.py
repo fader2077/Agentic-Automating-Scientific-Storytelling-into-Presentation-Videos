@@ -59,7 +59,8 @@ def parse_script(script_text):
         result.append(page_data)
     return result
 
-def tts_per_slide(model_type, script_path, speech_save_dir, ref_audio, ref_text=None):
+
+def synthesize_slide_audio(model_type, script_path, speech_save_dir, ref_audio, ref_text=None):
     with open(script_path, 'r') as f: script_with_cursor = ''.join(f.readlines())
     parsed_speech = parse_script(script_with_cursor)
     
@@ -79,3 +80,7 @@ def tts_per_slide(model_type, script_path, speech_save_dir, ref_audio, ref_text=
         speech_result_path = path.join(speech_save_dir, "{}.wav".format(str(slide_idx)))
         if model_type == "f5":
             inference_f5(subtitle, speech_result_path, ref_audio, ref_text, f5tts=f5tts)
+
+
+def tts_per_slide(model_type, script_path, speech_save_dir, ref_audio, ref_text=None):
+    return synthesize_slide_audio(model_type, script_path, speech_save_dir, ref_audio, ref_text=ref_text)

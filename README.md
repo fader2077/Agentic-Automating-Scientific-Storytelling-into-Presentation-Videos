@@ -60,9 +60,9 @@ The requested `Target length (minutes)` controls desired talk length and slide b
 - `web/static/`: browser UI for upload, settings, model/style selectors, history, replay, agents, tools, OCR assets, and output preview.
 - `web/test_api.py`: backend and API smoke tests.
 - `src/real_pipeline.py`: real OCR-to-video pipeline.
-- `src/cursor_router.py`: deterministic cursor route generation.
-- `src/cursor_overlay.py`: cursor overlay rendering.
-- `src/speech_synth.py`: F5TTS per-slide speech generation.
+- `src/cursor_router.py`: deterministic cursor route generation through `build_cursor_timeline`.
+- `src/cursor_overlay.py`: cursor overlay rendering through `render_cursor_overlay_timeline`.
+- `src/speech_synth.py`: F5TTS per-slide speech generation through `synthesize_slide_audio`.
 - `src/agents/`: agent catalog and per-agent `skills.md` files.
 - `src/tools/manifest.json`: runtime tool registry.
 
