@@ -293,6 +293,8 @@ def main() -> None:
             root = client.get("/")
             assert root.status_code == 200
             assert "Task History" in root.text
+            assert "Agentic graph" in root.text
+            assert "agent-graph" in root.text
             assert client.get("/history").status_code == 200
             replay_page = client.get(f"/replay/{task_id}")
             assert replay_page.status_code == 200

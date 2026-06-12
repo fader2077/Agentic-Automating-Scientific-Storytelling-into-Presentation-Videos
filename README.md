@@ -42,7 +42,7 @@ SupervisorAgent
   -> RenderAgent
 ```
 
-The graph is exposed by `/api/agent-graph` and included in `/api/health`. It uses a supervisor, conditional routes, parallel fanout, join gating, and repair cycles. Each graph node owns its declared skills and tools. The real pipeline subprocess still performs the heavy OCR, model, TTS, cursor, and ffmpeg work; LangGraph provides the inspectable agent handoff contract in the web orchestration layer.
+The graph is exposed by `/api/agent-graph`, included in `/api/health`, and rendered in the Run page `Agentic graph` panel with node edges and tool-call trace. It uses a supervisor, conditional routes, parallel fanout, join gating, and repair cycles. Each graph node owns its declared skills and tools. The real pipeline subprocess still performs the heavy OCR, model, TTS, cursor, and ffmpeg work; LangGraph provides the inspectable agent handoff contract in the web orchestration layer.
 
 ## Tools
 
@@ -93,8 +93,7 @@ The web worker chooses the pipeline Python in this order:
 
 1. `P2V_PIPELINE_PYTHON` environment variable, if set.
 2. Repository `.venv\Scripts\python.exe`, if present.
-3. Existing local runtime `D:\Paper2Video要變牛牛\.venv\Scripts\python.exe`, if present.
-4. The Python executable that started FastAPI.
+3. The Python executable that started FastAPI.
 
 For real TTS runs, use a Python environment with `whisperx` and `f5_tts` installed. `whisperx` is only needed when `--ref_text` is missing; F5TTS is needed for speech synthesis.
 
@@ -113,6 +112,7 @@ After F5TTS synthesis, the pipeline measures total narration duration and applie
 ## Run Web UI
 
 ```powershell
+$env:P2V_PIPELINE_PYTHON = ".\.venv\Scripts\python.exe"
 .\.venv\Scripts\python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8008
 ```
 

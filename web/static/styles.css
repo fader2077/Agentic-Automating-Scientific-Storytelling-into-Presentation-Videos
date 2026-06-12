@@ -102,6 +102,7 @@ body {
 .monitor,
 .output,
 .tools-panel,
+.graph-panel,
 .ocr-panel,
 .replay-panel,
 .replay-side {
@@ -357,6 +358,47 @@ button.primary {
   margin-bottom: 14px;
 }
 
+.agent-graph {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.graph-node {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(250, 252, 255, 0.98);
+}
+
+.graph-node-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.graph-node-head h3 {
+  overflow-wrap: anywhere;
+}
+
+.graph-edge-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.graph-edge-list span {
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(18, 107, 154, 0.08);
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
 .agent-row {
   display: grid;
   gap: 4px;
@@ -498,6 +540,7 @@ button.primary {
 }
 
 #task-log,
+#agent-graph-calls,
 #snapshot-calls {
   margin: 0;
   padding: 12px;
@@ -507,6 +550,11 @@ button.primary {
   white-space: pre-wrap;
   font-size: 12px;
   line-height: 1.5;
+}
+
+#agent-graph-calls {
+  min-height: 140px;
+  max-height: 240px;
 }
 
 video {

@@ -13,6 +13,9 @@ const artifactLinks = document.getElementById("artifact-links");
 const testOllamaButton = document.getElementById("test-ollama");
 const toolCatalogRoot = document.getElementById("tool-catalog");
 const agentCatalogRoot = document.getElementById("agent-catalog");
+const agentGraphSummary = document.getElementById("agent-graph-summary");
+const agentGraphRoot = document.getElementById("agent-graph");
+const agentGraphCalls = document.getElementById("agent-graph-calls");
 const ocrSummary = document.getElementById("ocr-summary");
 const ocrAssetsRoot = document.getElementById("ocr-assets");
 const queueSummary = document.getElementById("queue-summary");
@@ -185,6 +188,30 @@ function renderAgentCatalog(items = []) {
     `;
     agentCatalogRoot.appendChild(card);
   });
+}
+
+function renderAgentGraph(graph = {}) {
+  const nodes = graph.nodes || [];
+  const edges = graph.edges || [];
+  agentGraphSummary.textContent = `${graph.framework || "graph"} | compiled ${Boolean(graph.compiled)} | ${graph.execution_model || ""} | nodes ${nodes.length} | edges ${edges.length}`;
+  agentGraphRoot.innerHTML = "";
+  nodes.forEach((node) => {
+    const outgoing = edges.filter((edge) => edge.source === node.key);
+    const card = document.createElement("article");
+    card.className = "graph-node";
+    card.innerHTML = `
+      <div class="graph-node-head">
+        <h3>${escapeHtml(node.key)}</h3>
+        <span class="tool-kind">${escapeHtml(node.stage || "agent")}</span>
+      </div>
+      <div class="agent-row"><strong>Skills</strong><span>${escapeHtml((node.skills || []).join(", "))}</span></div>
+      <div class="graph-edge-list">
+        ${outgoing.map((edge) => `<span>${escapeHtml(edge.type)} -> ${escapeHtml(edge.target)}</span>`).join("") || "<span>terminal</span>"}
+      </div>
+    `;
+    agentGraphRoot.appendChild(card);
+  });
+  agentGraphCalls.textContent = (graph.tool_call_check || []).join("\n");
 }
 
 async function openSkillsEditor(agentKey) {
@@ -398,6 +425,10 @@ async function loadAgentCatalog() {
   renderAgentCatalog(await request("/api/agent-catalog"));
 }
 
+async function loadAgentGraph() {
+  renderAgentGraph(await request("/api/agent-graph"));
+}
+
 async function uploadPaper(file) {
   const data = new FormData();
   data.append("file", file);
@@ -501,7 +532,7 @@ skillsEditor.addEventListener("click", (event) => {
 
 async function initialize() {
   await loadSettings();
-  await Promise.all([loadModelOptions(), loadSlideStyles(), loadToolCatalog(), loadAgentCatalog(), loadQueue(), loadHealth()]);
+  await Promise.all([loadModelOptions(), loadSlideStyles(), loadToolCatalog(), loadAgentCatalog(), loadAgentGraph(), loadQueue(), loadHealth()]);
 }
 
 initialize().catch((error) => {

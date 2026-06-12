@@ -43,7 +43,6 @@ PIPELINE_STEP_MAP = {
 }
 PIPELINE_PYTHON_CANDIDATES = [
     ROOT.parent / ".venv" / "Scripts" / "python.exe",
-    Path("D:/Paper2Video要變牛牛/.venv/Scripts/python.exe"),
 ]
 PIPELINE_SCRIPT = ROOT.parent / "src" / "real_pipeline.py"
 AGENTS_DIR = ROOT.parent / "src" / "agents"
