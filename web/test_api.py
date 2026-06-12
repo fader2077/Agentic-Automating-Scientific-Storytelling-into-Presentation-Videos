@@ -51,6 +51,7 @@ from web.app import (
 from src.cursor_overlay import render_cursor_overlay_timeline
 from src.real_pipeline import (
     audit_asset_caption,
+    build_srt_from_speech_manifest,
     ensure_reference_audio,
     expand_speaker_text,
     compact_slide_caption,
@@ -238,7 +239,7 @@ def main() -> None:
             assert target_speaker_words(10) >= 60
             long_speaker = expand_speaker_text("This slide introduces the method.", "Method", ["contrastive training", "backdoor robustness"], 10)
             assert len(long_speaker.split()) >= 60
-            assert tts_pacing_for_minutes(6)["voice_speed"] <= 0.65
+            assert tts_pacing_for_minutes(6)["voice_speed"] <= 0.56
             assert tts_pacing_for_minutes(10)["voice_speed"] <= 0.9
             assert tts_pacing_for_minutes(10)["sentence_pause"] >= 1.0
             assert len(split_narration_chunks("One sentence. " * 40, max_chars=80)) > 1
@@ -249,6 +250,32 @@ def main() -> None:
             assert 3 <= len(compact_caption.split()) <= 7
             compact_captions = compact_slide_captions("This is a long subtitle sentence. A second caption should stay readable and aligned.")
             assert 1 <= len(compact_captions) <= 2
+            manifest_audio = fixture_dir / "manifest_audio"
+            manifest_audio.mkdir(exist_ok=True)
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=24000:cl=mono",
+                    "-t",
+                    "4",
+                    str(manifest_audio / "0.wav"),
+                ],
+                check=True,
+            )
+            manifest_path = manifest_audio / "speech_manifest.json"
+            manifest_path.write_text(
+                json.dumps({"slides": [{"slide_index": 0, "chunks": [{"text": "First full subtitle sentence. Second full subtitle sentence.", "start": 0, "end": 4}]}]}),
+                encoding="utf-8",
+            )
+            manifest_srt = fixture_dir / "manifest.srt"
+            assert build_srt_from_speech_manifest(manifest_path, manifest_audio, manifest_srt) is True
+            assert "First full subtitle sentence" in manifest_srt.read_text(encoding="utf-8")
             assert audit_asset_caption("%%%% $$$$ @@@@ \u03b1\u03b2\u03b3", "chart", 7) == "OCR chart from page 7"
 
             fallback_ref = ensure_reference_audio(str(fixture_dir / "missing_reference.wav"), fixture_dir)

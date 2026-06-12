@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import subprocess
 import torch
@@ -64,7 +65,27 @@ def parse_script(script_text):
     return result
 
 
-def split_narration_chunks(text, max_chars=260):
+def wav_duration(wav_path):
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            str(wav_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return float(result.stdout.strip())
+
+
+def split_narration_chunks(text, max_chars=120):
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return []
@@ -152,6 +173,7 @@ def synthesize_slide_audio(
 
     F5TTS = load_f5tts_class() if model_type == "f5" else None
     f5tts = F5TTS() if model_type == "f5" else None
+    manifest = {"slides": []}
     
     for slide_idx in range(len(parsed_speech)):
         speech_with_cursor = parsed_speech[slide_idx]
@@ -162,22 +184,40 @@ def synthesize_slide_audio(
         speech_result_path = path.join(speech_save_dir, "{}.wav".format(str(slide_idx)))
         if model_type == "f5":
             chunks = split_narration_chunks(subtitle)
+            slide_manifest = {"slide_index": slide_idx, "chunks": [], "audio_file": speech_result_path}
             if len(chunks) == 1 and sentence_pause <= 0:
                 inference_f5(chunks[0], speech_result_path, ref_audio, ref_text, f5tts=f5tts, speed=voice_speed)
+                slide_manifest["chunks"].append({"text": chunks[0], "start": 0.0, "end": wav_duration(speech_result_path)})
+                manifest["slides"].append(slide_manifest)
                 continue
 
             chunk_dir = Path(speech_save_dir) / "_chunks" / str(slide_idx)
             os.makedirs(chunk_dir, exist_ok=True)
             concat_inputs = []
+            offset = 0.0
             for chunk_idx, chunk_text in enumerate(chunks):
                 chunk_path = chunk_dir / f"{chunk_idx:03d}.wav"
                 inference_f5(chunk_text, str(chunk_path), ref_audio, ref_text, f5tts=f5tts, speed=voice_speed)
                 concat_inputs.append(chunk_path)
+                chunk_duration = wav_duration(chunk_path)
+                slide_manifest["chunks"].append(
+                    {
+                        "text": chunk_text,
+                        "start": round(offset, 3),
+                        "end": round(offset + chunk_duration, 3),
+                    }
+                )
+                offset += chunk_duration
                 if sentence_pause > 0 and chunk_idx < len(chunks) - 1:
                     pause_path = chunk_dir / f"{chunk_idx:03d}_pause.wav"
                     make_silence_wav(pause_path, sentence_pause)
                     concat_inputs.append(pause_path)
+                    offset += sentence_pause
             concat_wavs(concat_inputs, speech_result_path)
+            manifest["slides"].append(slide_manifest)
+
+    manifest_path = Path(speech_save_dir) / "speech_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def tts_per_slide(model_type, script_path, speech_save_dir, ref_audio, ref_text=None):

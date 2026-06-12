@@ -514,9 +514,9 @@ def expand_speaker_text(speaker: str, slide_title: str, bullets: list[str], desi
 def tts_pacing_for_minutes(desired_minutes: int) -> dict[str, float]:
     minutes = max(1, int(desired_minutes))
     if minutes >= 8:
-        return {"voice_speed": 0.62, "sentence_pause": 1.0}
+        return {"voice_speed": 0.55, "sentence_pause": 1.1}
     if minutes >= 5:
-        return {"voice_speed": 0.62, "sentence_pause": 1.0}
+        return {"voice_speed": 0.55, "sentence_pause": 1.1}
     return {"voice_speed": 1.0, "sentence_pause": 0.0}
 
 
@@ -1008,6 +1008,56 @@ def format_subtitle_cue(text: str, max_chars: int = 74) -> str:
     return "\n".join(lines[:2])
 
 
+def build_srt_from_speech_manifest(manifest_path: Path, audio_dir: Path, srt_path: Path) -> bool:
+    if not manifest_path.exists():
+        return False
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    slides = manifest.get("slides")
+    if not isinstance(slides, list) or not slides:
+        return False
+
+    entries = []
+    entry_idx = 1
+    current = 0.0
+    for slide_idx, slide in enumerate(slides):
+        wav = audio_dir / f"{slide_idx}.wav"
+        slide_duration = ffprobe_duration(wav)
+        for chunk in slide.get("chunks", []):
+            text = str(chunk.get("text") or "").strip()
+            if not text:
+                continue
+            chunk_start = current + float(chunk.get("start", 0.0))
+            chunk_end = current + float(chunk.get("end", 0.0))
+            chunk_end = min(current + slide_duration, max(chunk_start + 0.4, chunk_end))
+            cues = split_subtitle_cues(text, max_words=9, max_chars=68)
+            if not cues:
+                continue
+            cue_duration = max(0.5, (chunk_end - chunk_start) / len(cues))
+            for cue_idx, cue in enumerate(cues):
+                start = chunk_start + cue_idx * cue_duration
+                end = min(chunk_end, start + cue_duration)
+                entries.append((entry_idx, start, end, cue))
+                entry_idx += 1
+        current += slide_duration
+
+    write_srt_entries(entries, srt_path)
+    return True
+
+
+def write_srt_entries(entries: list[tuple[int, float, float, str]], srt_path: Path) -> None:
+    def fmt(seconds: float) -> str:
+        ms = int(round(seconds * 1000))
+        h, rem = divmod(ms, 3600_000)
+        m, rem = divmod(rem, 60_000)
+        s, ms = divmod(rem, 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+    content = []
+    for idx, start, end, text in entries:
+        content.extend([str(idx), f"{fmt(start)} --> {fmt(end)}", text, ""])
+    srt_path.write_text("\n".join(content), encoding="utf-8")
+
+
 def build_srt_from_script(script_path: Path, audio_dir: Path, srt_path: Path) -> None:
     pages = [p.strip() for p in script_path.read_text(encoding="utf-8").split("###") if p.strip()]
     current = 0.0
@@ -1035,17 +1085,7 @@ def build_srt_from_script(script_path: Path, audio_dir: Path, srt_path: Path) ->
                 entry_idx += 1
         current = slide_end
 
-    def fmt(seconds: float) -> str:
-        ms = int(round(seconds * 1000))
-        h, rem = divmod(ms, 3600_000)
-        m, rem = divmod(rem, 60_000)
-        s, ms = divmod(rem, 1000)
-        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-    content = []
-    for idx, start, end, text in entries:
-        content.extend([str(idx), f"{fmt(start)} --> {fmt(end)}", text, ""])
-    srt_path.write_text("\n".join(content), encoding="utf-8")
+    write_srt_entries(entries, srt_path)
 
 
 def build_page_clips(result_dir: Path, slide_count: int) -> Path:
@@ -1142,10 +1182,10 @@ def build_page_clips(result_dir: Path, slide_count: int) -> Path:
 
 def burn_subtitles(video_in: Path, srt_path: Path, video_out: Path) -> None:
     style = (
-        "FontName=Arial,FontSize=10,PrimaryColour=&H00FFFFFF,"
+        "FontName=Arial,FontSize=12,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BackColour=&H00000000,"
         "BorderStyle=1,Outline=1,Shadow=0,Alignment=2,"
-        "MarginL=110,MarginR=110,MarginV=8"
+        "MarginL=80,MarginR=80,MarginV=12"
     )
     sub_path = srt_path.resolve().as_posix().replace(":", "\\:").replace("'", "\\'")
     run(
@@ -1261,6 +1301,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     metadata["steps"]["tts"] = {
         "seconds": round(time.time() - t, 3),
         "audio_files": len(list(audio_dir.glob("*.wav"))),
+        "speech_manifest": str(audio_dir / "speech_manifest.json"),
         "pacing": tts_pacing,
         "audio_conditioning": audio_conditioning,
         "duration_fit": duration_fit,
@@ -1283,7 +1324,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     t = time.time()
     emit_event("start", "video", "Video composition started.", {})
     srt_path = result_dir / "subtitles.srt"
-    build_srt_from_script(script_path, audio_dir, srt_path)
+    if not build_srt_from_speech_manifest(audio_dir / "speech_manifest.json", audio_dir, srt_path):
+        build_srt_from_script(script_path, audio_dir, srt_path)
     merged = build_page_clips(result_dir, slide_count)
     with_cursor = result_dir / "2_merage.mp4"
     try:
@@ -1311,6 +1353,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "slides_tex": str(tex_path),
         "slides_pdf": str(pdf_out),
         "script": str(script_path),
+        "speech_manifest": str(audio_dir / "speech_manifest.json"),
         "cursor": str(cursor_path),
         "subtitles": str(srt_path),
         "video": str(final_video),
