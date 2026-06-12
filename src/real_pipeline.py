@@ -442,9 +442,9 @@ def target_content_slide_count(desired_minutes: int) -> int:
 
 def target_speaker_words(desired_minutes: int) -> int:
     slide_count = target_content_slide_count(desired_minutes)
-    target_total_words = max(180, int(desired_minutes) * 145)
+    target_total_words = max(240, int(desired_minutes) * 215)
     rendered_slide_count = slide_count + 1
-    return max(28, min(86, target_total_words // max(rendered_slide_count, 1)))
+    return max(34, min(125, target_total_words // max(rendered_slide_count, 1)))
 
 
 def word_count(text: str) -> int:
@@ -495,6 +495,8 @@ def expand_speaker_text(speaker: str, slide_title: str, bullets: list[str], desi
             "The visual evidence should be read as support for this explanation rather than as a separate result.",
             "This point also prepares the next part of the talk, where the method and experiments are tied together.",
             "For a longer presentation, the important takeaway is how this evidence changes the interpretation of the paper.",
+            "A careful reading should compare the claim, the evidence, and the limitation before drawing a conclusion.",
+            "This pacing gives the audience time to inspect the figure or table while the narration explains its role.",
         ]
     )
     for addition in additions:
@@ -502,6 +504,15 @@ def expand_speaker_text(speaker: str, slide_title: str, bullets: list[str], desi
             break
         speaker = f"{speaker} {addition}"
     return trim_speaker_text(speaker, target_words + 5)
+
+
+def tts_pacing_for_minutes(desired_minutes: int) -> dict[str, float]:
+    minutes = max(1, int(desired_minutes))
+    if minutes >= 8:
+        return {"voice_speed": 0.86, "sentence_pause": 0.55}
+    if minutes >= 5:
+        return {"voice_speed": 0.86, "sentence_pause": 0.45}
+    return {"voice_speed": 1.0, "sentence_pause": 0.0}
 
 
 def validate_plan(plan: dict[str, Any], desired_minutes: int) -> dict[str, Any]:
@@ -836,7 +847,7 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
         return {"changed": False, "original_total": round(original_total, 3), "target_total": round(target_total, 3)}
 
     speed = original_total / target_total
-    if 0.95 <= speed <= 1.08:
+    if 0.98 <= speed <= 1.08:
         return {
             "changed": False,
             "mode": "natural",
@@ -845,7 +856,7 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
             "speed": round(speed, 3),
         }
 
-    if speed < 0.85:
+    if speed < 0.98:
         missing = target_total - original_total
         total_weight = sum(max(duration, 1.0) for duration in durations)
         for wav_path, duration in zip(files, durations):
@@ -859,7 +870,7 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
             "target_total": round(target_total, 3),
             "padded_total": round(padded_total, 3),
             "speed": round(speed, 3),
-            "reason": "Avoided aggressive TTS slow-down to preserve voice quality.",
+            "reason": "Used distributed pauses instead of slowing synthesized speech.",
         }
 
     if speed > 1.25:
@@ -902,6 +913,50 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
     }
 
 
+def split_subtitle_cues(text: str, max_words: int = 11, max_chars: int = 74) -> list[str]:
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return []
+    sentences = [item.strip() for item in re.split(r"(?<=[.!?])\s+", text) if item.strip()]
+    cues: list[str] = []
+    for sentence in sentences or [text]:
+        words = sentence.split()
+        current: list[str] = []
+        for word in words:
+            candidate = " ".join(current + [word])
+            if current and (len(candidate) > max_chars or len(current) >= max_words):
+                cues.append(format_subtitle_cue(" ".join(current), max_chars=max_chars))
+                current = [word]
+            else:
+                current.append(word)
+        if current:
+            cues.append(format_subtitle_cue(" ".join(current), max_chars=max_chars))
+    return [cue for cue in cues if cue]
+
+
+def format_subtitle_cue(text: str, max_chars: int = 74) -> str:
+    words = text.split()
+    if len(" ".join(words)) <= max_chars:
+        return " ".join(words)
+    lines: list[str] = []
+    current: list[str] = []
+    line_limit = max(24, max_chars // 2)
+    for word in words:
+        candidate = " ".join(current + [word])
+        if current and len(candidate) > line_limit:
+            lines.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+        if len(lines) == 1 and len(" ".join(current)) >= line_limit:
+            lines.append(" ".join(current))
+            current = []
+            break
+    if current and len(lines) < 2:
+        lines.append(" ".join(current))
+    return "\n".join(lines[:2])
+
+
 def build_srt_from_script(script_path: Path, audio_dir: Path, srt_path: Path) -> None:
     pages = [p.strip() for p in script_path.read_text(encoding="utf-8").split("###") if p.strip()]
     current = 0.0
@@ -910,16 +965,24 @@ def build_srt_from_script(script_path: Path, audio_dir: Path, srt_path: Path) ->
     for slide_idx, page in enumerate(pages):
         wav = audio_dir / f"{slide_idx}.wav"
         duration = ffprobe_duration(wav)
+        slide_end = current + duration
         text_parts = []
         for line in page.splitlines():
             if "|" in line:
                 text_parts.append(line.split("|", 1)[0].strip())
         text = " ".join(text_parts).strip()
-        start = current
-        end = current + duration
-        entries.append((entry_idx, start, end, text))
-        entry_idx += 1
-        current = end
+        cues = split_subtitle_cues(text)
+        if cues:
+            weights = [max(1, word_count(cue)) for cue in cues]
+            total_weight = sum(weights)
+            elapsed = 0.0
+            for cue, weight in zip(cues, weights):
+                start = current + elapsed
+                elapsed += duration * (weight / total_weight)
+                end = current + min(duration, elapsed)
+                entries.append((entry_idx, start, end, cue))
+                entry_idx += 1
+        current = slide_end
 
     def fmt(seconds: float) -> str:
         ms = int(round(seconds * 1000))
@@ -1028,9 +1091,10 @@ def build_page_clips(result_dir: Path, slide_count: int) -> Path:
 
 def burn_subtitles(video_in: Path, srt_path: Path, video_out: Path) -> None:
     style = (
-        "FontName=Arial,FontSize=13,PrimaryColour=&H00FFFFFF,"
-        "OutlineColour=&H00000000,BackColour=&H99000000,"
-        "BorderStyle=4,Outline=1,Shadow=0,Alignment=2,MarginV=24"
+        "FontName=Arial,FontSize=11,PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,BackColour=&H00000000,"
+        "BorderStyle=1,Outline=1,Shadow=0,Alignment=2,"
+        "MarginL=90,MarginR=90,MarginV=12"
     )
     sub_path = srt_path.resolve().as_posix().replace(":", "\\:").replace("'", "\\'")
     run(
@@ -1131,18 +1195,22 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     ref_audio_path, ref_text = resolve_reference_voice(args.ref_audio, args.ref_text, result_dir)
     if str(ref_audio_path) != args.ref_audio:
         emit_event("info", "tts", "Reference audio missing; using fallback reference voice.", {"ref_audio": str(ref_audio_path)})
+    tts_pacing = tts_pacing_for_minutes(args.desired_minutes)
     synthesize_slide_audio(
         model_type="f5",
         script_path=str(script_path),
         speech_save_dir=str(audio_dir),
         ref_audio=str(ref_audio_path),
         ref_text=ref_text,
+        voice_speed=tts_pacing["voice_speed"],
+        sentence_pause=tts_pacing["sentence_pause"],
     )
     audio_conditioning = condition_audio_files(audio_dir)
     duration_fit = normalize_audio_total_duration(audio_dir, args.desired_minutes)
     metadata["steps"]["tts"] = {
         "seconds": round(time.time() - t, 3),
         "audio_files": len(list(audio_dir.glob("*.wav"))),
+        "pacing": tts_pacing,
         "audio_conditioning": audio_conditioning,
         "duration_fit": duration_fit,
     }

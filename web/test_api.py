@@ -49,7 +49,15 @@ from web.app import (
 )
 
 from src.cursor_overlay import render_cursor_overlay_timeline
-from src.real_pipeline import audit_asset_caption, ensure_reference_audio, expand_speaker_text, target_speaker_words
+from src.real_pipeline import (
+    audit_asset_caption,
+    ensure_reference_audio,
+    expand_speaker_text,
+    split_subtitle_cues,
+    target_speaker_words,
+    tts_pacing_for_minutes,
+)
+from src.speech_synth import split_narration_chunks
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
@@ -223,9 +231,16 @@ def main() -> None:
             restore_skills = client.put("/api/agents/SpeechAgent/skills.md", json={"content": original_skills})
             assert restore_skills.status_code == 200
 
-            assert target_speaker_words(10) >= 60
+            assert target_speaker_words(10) >= 90
             long_speaker = expand_speaker_text("This slide introduces the method.", "Method", ["contrastive training", "backdoor robustness"], 10)
-            assert len(long_speaker.split()) >= 55
+            assert len(long_speaker.split()) >= 80
+            assert tts_pacing_for_minutes(6)["voice_speed"] <= 0.9
+            assert tts_pacing_for_minutes(10)["voice_speed"] <= 0.9
+            assert tts_pacing_for_minutes(10)["sentence_pause"] >= 0.5
+            assert len(split_narration_chunks("One sentence. " * 40, max_chars=80)) > 1
+            subtitle_cues = split_subtitle_cues("This is a long subtitle sentence that should not cover the slide content. " * 4)
+            assert len(subtitle_cues) > 2
+            assert max(len(cue.replace("\n", " ")) for cue in subtitle_cues) <= 90
             assert audit_asset_caption("%%%% $$$$ @@@@ \u03b1\u03b2\u03b3", "chart", 7) == "OCR chart from page 7"
 
             fallback_ref = ensure_reference_audio(str(fixture_dir / "missing_reference.wav"), fixture_dir)

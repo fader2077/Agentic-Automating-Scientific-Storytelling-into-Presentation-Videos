@@ -108,7 +108,7 @@ If that file is missing, `src/real_pipeline.py` creates `reference_fallback.wav`
 
 Cursor overlay does not require a repository image asset. `src/cursor_overlay.py` draws the cursor directly with an ffmpeg `drawbox` filter from `cursor.json`.
 
-For longer videos, the pipeline expands slide narration before TTS so the speech is naturally longer. After F5TTS synthesis it applies an ffmpeg limiter with headroom before any duration handling. It only uses small `atempo` corrections; if the narration is still much shorter than the target, it distributes silent padding across slide audio instead of aggressively slowing speech and causing robotic artifacts.
+For longer videos, the pipeline expands slide narration before TTS, lowers F5TTS voice speed, and inserts short sentence pauses before slide-level concatenation. After synthesis it applies an ffmpeg limiter with headroom before any duration handling. If narration is shorter than the target, it distributes short pauses across slide audio instead of stretching speech and causing robotic artifacts; small `atempo` correction is reserved for modest over-target cases. Subtitles are split into short cues with a compact burn-in style so they do not cover most of the slide.
 
 ## Run Web UI
 
