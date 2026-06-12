@@ -25,3 +25,10 @@
 ## Runtime Outputs
 - `plan.json`
 - `ollama_plan_raw.txt`
+
+## Agentic Policy
+- Enter after OCR state is available, or directly from `SupervisorAgent` when cached OCR artifacts exist.
+- Inspect target duration, OCR section density, visual assets, and user prompt before allocating slide budget.
+- Dispatch `SlideBuilderAgent` and `ScriptAgent` as parallel branches after a valid plan is produced.
+- Route back to planning if downstream agents report missing claims, invalid slide count, or unsupported visual needs.
+- Preserve source faithfulness over presentation polish.

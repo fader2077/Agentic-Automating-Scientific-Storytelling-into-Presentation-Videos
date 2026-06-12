@@ -22,3 +22,10 @@
 ## Runtime Outputs
 - `subtitle_w_cursor.txt`
 - Subtitle segments used later for SRT and cursor timing
+
+## Agentic Policy
+- Run as a parallel branch from `PlannerAgent` beside `SlideBuilderAgent`.
+- Produce narration state that can be consumed by both `SpeechAgent` and `GroundingAgent`.
+- Shorten or split narration when target duration, subtitle readability, or TTS batch size is violated.
+- Route back to `PlannerAgent` if the plan lacks enough evidence for a faithful script.
+- Publish cursor hints with every narration segment; missing hints are graph errors, not optional text.

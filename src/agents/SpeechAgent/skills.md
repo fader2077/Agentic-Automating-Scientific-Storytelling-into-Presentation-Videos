@@ -22,3 +22,10 @@
 
 ## Runtime Outputs
 - `audio/*.wav`
+
+## Agentic Policy
+- Enter after `ScriptAgent` publishes narration segments.
+- Prefer user-provided reference audio and text; use packaged F5TTS reference voice only when no configured reference exists.
+- Normalize total audio duration against the requested target minutes before handing off.
+- Report TTS dependency, CUDA, or duration errors as graph state for repair instead of hiding them.
+- Publish `audio` only after every slide has a matching WAV file.

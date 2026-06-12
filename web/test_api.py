@@ -204,8 +204,11 @@ def main() -> None:
             graph_payload = agent_graph.json()
             assert graph_payload["framework"] == "langgraph"
             assert graph_payload["compiled"] is True
-            assert graph_payload["visited_check"][0] == "IngestionAgent"
+            assert graph_payload["execution_model"] == "supervisor + conditional edges + parallel fanout + repair cycles"
+            assert graph_payload["visited_check"][0] == "SupervisorAgent"
             assert graph_payload["visited_check"][-1] == "RenderAgent"
+            assert any(edge["type"] == "parallel_fanout" for edge in graph_payload["edges"])
+            assert any(call.startswith("PlannerAgent.") for call in graph_payload["tool_call_check"])
             skills = client.get("/api/agents/SpeechAgent/skills.md")
             assert skills.status_code == 200
             assert "F5TTS synthesis" in skills.text

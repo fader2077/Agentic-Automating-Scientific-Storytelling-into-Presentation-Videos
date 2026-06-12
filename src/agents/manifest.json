@@ -1,5 +1,13 @@
 [
   {
+    "key": "SupervisorAgent",
+    "title": "Supervisor Agent",
+    "stage": "route",
+    "skills_md": "SupervisorAgent/skills.md",
+    "skills": ["state routing", "resume planning", "branch selection"],
+    "tools": []
+  },
+  {
     "key": "IngestionAgent",
     "title": "Ingestion Agent",
     "stage": "ingest",
@@ -16,12 +24,28 @@
     "tools": ["section_planner", "ollama_dispatch"]
   },
   {
+    "key": "IngestionRepairAgent",
+    "title": "Ingestion Repair Agent",
+    "stage": "repair",
+    "skills_md": "IngestionRepairAgent/skills.md",
+    "skills": ["OCR retry", "manifest repair", "failure triage"],
+    "tools": ["ocr_router", "ocr_asset_manifest"]
+  },
+  {
     "key": "SlideBuilderAgent",
     "title": "Slide Builder Agent",
     "stage": "slides",
     "skills_md": "SlideBuilderAgent/skills.md",
     "skills": ["Beamer generation", "OCR visual grounding", "table placement", "figure placement"],
     "tools": ["beamer_writer", "figure_grounder", "slide_renderer"]
+  },
+  {
+    "key": "VisualAuditorAgent",
+    "title": "Visual Auditor Agent",
+    "stage": "audit",
+    "skills_md": "VisualAuditorAgent/skills.md",
+    "skills": ["visual coverage audit", "formula/table placement checks", "slide repair routing"],
+    "tools": ["figure_grounder", "slide_renderer"]
   },
   {
     "key": "ScriptAgent",
@@ -38,6 +62,14 @@
     "skills_md": "SpeechAgent/skills.md",
     "skills": ["voice conditioning", "F5TTS synthesis", "per-slide audio packaging"],
     "tools": ["voice_profiler", "f5_queue"]
+  },
+  {
+    "key": "ArtifactJoinAgent",
+    "title": "Artifact Join Agent",
+    "stage": "join",
+    "skills_md": "ArtifactJoinAgent/skills.md",
+    "skills": ["parallel branch synchronization", "artifact readiness checks", "handoff gating"],
+    "tools": []
   },
   {
     "key": "GroundingAgent",

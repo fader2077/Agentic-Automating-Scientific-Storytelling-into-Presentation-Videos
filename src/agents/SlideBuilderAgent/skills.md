@@ -26,3 +26,10 @@
 - `latex_proj/slides.tex`
 - `latex_proj/slides.pdf`
 - `slide_imgs/*.png`
+
+## Agentic Policy
+- Run as a parallel branch from `PlannerAgent` beside `ScriptAgent`.
+- Select figures, tables, charts, and equations from `ocr_assets.json` instead of inventing visuals.
+- Hand off to `VisualAuditorAgent` after rendering.
+- Accept repair requests from `VisualAuditorAgent` when visual coverage, formula placement, or PDF rendering fails.
+- Publish `slides_pdf` and `slide_imgs` only after `pdflatex` and image rendering both succeed.

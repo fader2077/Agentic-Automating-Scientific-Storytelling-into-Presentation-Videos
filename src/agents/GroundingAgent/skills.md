@@ -22,3 +22,10 @@
 ## Runtime Outputs
 - `cursor.json`
 - `cursor_mid.json`
+
+## Agentic Policy
+- Enter through `ArtifactJoinAgent` only after slide images and audio are both present.
+- Use slide dimensions and narration cursor hints to compute deterministic focus paths.
+- Reject mismatched slide/audio counts instead of guessing timings.
+- Publish `cursor` state only when every slide has a cursor beat.
+- Route failures to render blocking state, because cursor errors affect final MP4 composition.

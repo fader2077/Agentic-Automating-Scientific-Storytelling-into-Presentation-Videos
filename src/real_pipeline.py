@@ -1,7 +1,6 @@
 ﻿from __future__ import annotations
 
 import argparse
-import base64
 import html
 import json
 import math
@@ -33,10 +32,6 @@ from speech_gen import tts_per_slide
 
 DEFAULT_MODEL = "qwen3.6:27b"
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
-RED_CURSOR_PNG = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
-    "/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-)
 F5_BASIC_REF_TEXT = "Some call me nature, others call me mother nature."
 
 
@@ -126,15 +121,9 @@ def resolve_reference_voice(ref_audio: str, ref_text: str | None, result_dir: Pa
 def ensure_cursor_image(cursor_img: Path) -> Path:
     source = SRC / "cursor_image" / "red.png"
     cursor_img.parent.mkdir(parents=True, exist_ok=True)
-    if source.exists():
-        shutil.copyfile(source, cursor_img)
-    else:
-        try:
-            from PIL import Image
-
-            Image.new("RGBA", (16, 16), (220, 32, 32, 255)).save(cursor_img)
-        except Exception:
-            cursor_img.write_bytes(base64.b64decode(RED_CURSOR_PNG))
+    if not source.exists():
+        raise PipelineError(f"Cursor image asset missing: {source}")
+    shutil.copyfile(source, cursor_img)
     return cursor_img
 
 def write_json(path: Path, data: Any) -> None:

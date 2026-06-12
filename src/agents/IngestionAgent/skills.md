@@ -27,3 +27,10 @@
 - `mineru/.../*content_list*.json`
 - `ocr_assets.json`
 - Copied visual assets under `latex_proj/ocr_assets`
+
+## Agentic Policy
+- Enter from `SupervisorAgent` when no reusable OCR artifacts exist.
+- Decide whether MinerU output is usable by checking markdown, content-list JSON, and visual asset counts.
+- If OCR output is missing or malformed, hand off to `IngestionRepairAgent` for one repair/retry cycle.
+- If OCR assets are valid, publish `ocr_assets` state and hand off to `PlannerAgent`.
+- Never silently fabricate paper content; failed OCR must remain an explicit graph error.

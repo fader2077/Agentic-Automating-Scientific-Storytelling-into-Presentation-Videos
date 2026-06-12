@@ -30,13 +30,19 @@ Each agent has an editable skills file under `src/agents/*/skills.md`. The web U
 
 ## Agentic Graph
 
-The control room builds an explicit LangGraph DAG from `src/agents/manifest.json` and `src/tools/manifest.json`:
+The control room builds an explicit LangGraph state graph from `src/agents/manifest.json` and `src/tools/manifest.json`:
 
 ```text
-IngestionAgent -> PlannerAgent -> SlideBuilderAgent -> ScriptAgent -> SpeechAgent -> GroundingAgent -> RenderAgent
+SupervisorAgent
+  -> IngestionAgent
+  -> PlannerAgent
+  -> [SlideBuilderAgent -> VisualAuditorAgent] and [ScriptAgent -> SpeechAgent]
+  -> ArtifactJoinAgent
+  -> GroundingAgent
+  -> RenderAgent
 ```
 
-The graph is exposed by `/api/agent-graph` and included in `/api/health`. Each graph node owns its declared skills and tools. The real pipeline subprocess still performs the heavy OCR, model, TTS, cursor, and ffmpeg work; LangGraph provides the inspectable agent handoff contract in the web orchestration layer.
+The graph is exposed by `/api/agent-graph` and included in `/api/health`. It uses a supervisor, conditional routes, parallel fanout, join gating, and repair cycles. Each graph node owns its declared skills and tools. The real pipeline subprocess still performs the heavy OCR, model, TTS, cursor, and ffmpeg work; LangGraph provides the inspectable agent handoff contract in the web orchestration layer.
 
 ## Tools
 
@@ -100,7 +106,7 @@ assets/demo/reference.wav
 
 If that file is missing, `src/real_pipeline.py` creates `reference_fallback.wav` inside the job result directory so F5TTS does not fail with `FileNotFoundError`. Voice quality is better when a real reference wav and matching transcript are provided.
 
-If `src/cursor_image/red.png` is missing, the pipeline writes a tiny fallback red cursor image into the job directory before ffmpeg composition.
+The cursor overlay asset is a required repository file at `src/cursor_image/red.png`. If it is missing, the pipeline fails fast instead of fabricating a replacement.
 
 After F5TTS synthesis, the pipeline measures total narration duration and applies ffmpeg `atempo` normalization when needed so the final MP4 stays close to the requested target minutes.
 
