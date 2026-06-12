@@ -514,9 +514,9 @@ def expand_speaker_text(speaker: str, slide_title: str, bullets: list[str], desi
 def tts_pacing_for_minutes(desired_minutes: int) -> dict[str, float]:
     minutes = max(1, int(desired_minutes))
     if minutes >= 8:
-        return {"voice_speed": 0.78, "sentence_pause": 0.7}
+        return {"voice_speed": 0.62, "sentence_pause": 1.0}
     if minutes >= 5:
-        return {"voice_speed": 0.74, "sentence_pause": 0.8}
+        return {"voice_speed": 0.62, "sentence_pause": 1.0}
     return {"voice_speed": 1.0, "sentence_pause": 0.0}
 
 
@@ -887,6 +887,17 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
             "reason": "Used distributed pauses instead of slowing synthesized speech.",
         }
 
+    if original_total <= requested_total + 30.0:
+        return {
+            "changed": False,
+            "mode": "accepted_slow_natural",
+            "original_total": round(original_total, 3),
+            "target_total": round(target_total, 3),
+            "requested_total": round(requested_total, 3),
+            "speed": round(speed, 3),
+            "reason": "Accepted slower natural narration instead of speeding speech.",
+        }
+
     if speed > 1.25:
         return {
             "changed": False,
@@ -950,16 +961,28 @@ def split_subtitle_cues(text: str, max_words: int = 7, max_chars: int = 52) -> l
     return [cue for cue in cues if cue]
 
 
-def compact_slide_caption(text: str, max_words: int = 5, max_chars: int = 34) -> str:
-    cues = split_subtitle_cues(text, max_words=max_words, max_chars=max_chars)
-    if not cues:
-        return ""
-    caption = cues[0].replace("\n", " ")
-    words = caption.split()[:max_words]
-    caption = " ".join(words).rstrip(".,;:")
-    if len(caption) > max_chars:
-        caption = caption[:max_chars].rsplit(" ", 1)[0].rstrip(".,;:")
-    return caption
+def compact_slide_captions(text: str, max_cues: int = 2, max_words: int = 7, max_chars: int = 44) -> list[str]:
+    captions: list[str] = []
+    seen: set[str] = set()
+    sentences = [item.strip() for item in re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text).strip()) if item.strip()]
+    for sentence in sentences or [text]:
+        caption = sentence.replace("\n", " ")
+        words = caption.split()[:max_words]
+        caption = " ".join(words).rstrip(".,;:")
+        if len(caption) > max_chars:
+            caption = caption[:max_chars].rsplit(" ", 1)[0].rstrip(".,;:")
+        key = caption.lower()
+        if caption and key not in seen:
+            captions.append(caption)
+            seen.add(key)
+        if len(captions) >= max_cues:
+            break
+    return captions
+
+
+def compact_slide_caption(text: str, max_words: int = 7, max_chars: int = 44) -> str:
+    captions = compact_slide_captions(text, max_cues=1, max_words=max_words, max_chars=max_chars)
+    return captions[0] if captions else ""
 
 
 def format_subtitle_cue(text: str, max_chars: int = 74) -> str:
@@ -999,12 +1022,17 @@ def build_srt_from_script(script_path: Path, audio_dir: Path, srt_path: Path) ->
             if "|" in line:
                 text_parts.append(line.split("|", 1)[0].strip())
         text = " ".join(text_parts).strip()
-        caption = compact_slide_caption(text)
-        if caption:
-            start = current + min(0.25, duration * 0.04)
-            end = min(slide_end, start + min(5.0, max(2.2, duration * 0.18)))
-            entries.append((entry_idx, start, end, caption))
-            entry_idx += 1
+        captions = compact_slide_captions(text)
+        if captions:
+            visible_start = current + min(0.2, duration * 0.03)
+            visible_end = slide_end - min(0.2, duration * 0.03)
+            visible_duration = max(0.5, visible_end - visible_start)
+            segment = visible_duration / len(captions)
+            for cue_idx, caption in enumerate(captions):
+                start = visible_start + cue_idx * segment
+                end = visible_start + (cue_idx + 1) * segment
+                entries.append((entry_idx, start, min(slide_end, end), caption))
+                entry_idx += 1
         current = slide_end
 
     def fmt(seconds: float) -> str:
@@ -1114,10 +1142,10 @@ def build_page_clips(result_dir: Path, slide_count: int) -> Path:
 
 def burn_subtitles(video_in: Path, srt_path: Path, video_out: Path) -> None:
     style = (
-        "FontName=Arial,FontSize=7,PrimaryColour=&H00FFFFFF,"
+        "FontName=Arial,FontSize=10,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BackColour=&H00000000,"
-        "BorderStyle=1,Outline=0.6,Shadow=0,Alignment=2,"
-        "MarginL=130,MarginR=130,MarginV=4"
+        "BorderStyle=1,Outline=1,Shadow=0,Alignment=2,"
+        "MarginL=110,MarginR=110,MarginV=8"
     )
     sub_path = srt_path.resolve().as_posix().replace(":", "\\:").replace("'", "\\'")
     run(
