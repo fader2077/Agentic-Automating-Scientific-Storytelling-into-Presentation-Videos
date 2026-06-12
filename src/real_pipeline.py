@@ -33,6 +33,7 @@ from speech_synth import synthesize_slide_audio
 DEFAULT_MODEL = "qwen3.6:27b"
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 F5_BASIC_REF_TEXT = "Some call me nature, others call me mother nature."
+FALLBACK_REF_TEXT = "This is a calm academic reference voice for clear presentation narration."
 
 
 class PipelineError(RuntimeError):
@@ -68,8 +69,54 @@ def clean_dir(path: Path) -> None:
 def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
-def write_fallback_reference_audio(path: Path, duration_seconds: float = 2.4, sample_rate: int = 24000) -> None:
+def sanitize_reference_text(ref_text: str | None) -> str | None:
+    if ref_text is None:
+        return None
+    if is_contaminated_reference_text(ref_text):
+        return FALLBACK_REF_TEXT
+    cleaned = re.sub(r"\b24\s*[-/]\s*7\b", "all day", ref_text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\btwenty\s+four\s+seven\b", "all day", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or None
+
+
+def is_contaminated_reference_text(ref_text: str | None) -> bool:
+    if ref_text is None:
+        return False
+    return bool(
+        re.search(
+            r"show\s+runs|sports\s+and\s+politics|hosted\s+by\s+someone|\b24\s*[-/]\s*7\b|\btwenty\s+four\s+seven\b",
+            ref_text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def write_fallback_reference_audio(path: Path, duration_seconds: float = 3.6, sample_rate: int = 24000) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    escaped_path = str(path).replace("'", "''")
+    escaped_text = FALLBACK_REF_TEXT.replace("'", "''")
+    powershell = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        "$s.Rate = -1; $s.Volume = 95; "
+        f"$s.SetOutputToWaveFile('{escaped_path}'); "
+        f"$s.Speak('{escaped_text}'); "
+        "$s.Dispose();"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", powershell],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if path.exists() and path.stat().st_size > 1000:
+            return
+    except Exception:
+        pass
+
     total_samples = int(duration_seconds * sample_rate)
     with wave.open(str(path), "wb") as handle:
         handle.setnchannels(1)
@@ -110,12 +157,14 @@ def find_f5_reference_audio() -> Path | None:
 def resolve_reference_voice(ref_audio: str, ref_text: str | None, result_dir: Path) -> tuple[Path, str | None]:
     requested = Path(ref_audio)
     if requested.exists():
-        return requested, ref_text
+        return requested, sanitize_reference_text(ref_text) or FALLBACK_REF_TEXT
     package_ref = find_f5_reference_audio()
     if package_ref is not None:
-        return package_ref, ref_text or F5_BASIC_REF_TEXT
+        if ref_text is None or is_contaminated_reference_text(ref_text):
+            return package_ref, F5_BASIC_REF_TEXT
+        return package_ref, sanitize_reference_text(ref_text) or F5_BASIC_REF_TEXT
     fallback = ensure_reference_audio(ref_audio, result_dir)
-    return fallback, ref_text or "Reference voice for generated academic narration."
+    return fallback, sanitize_reference_text(ref_text) or FALLBACK_REF_TEXT
 
 
 def write_json(path: Path, data: Any) -> None:
@@ -447,9 +496,13 @@ def target_content_slide_count(desired_minutes: int) -> int:
 
 def target_speaker_words(desired_minutes: int) -> int:
     slide_count = target_content_slide_count(desired_minutes)
-    target_total_words = max(220, int(desired_minutes) * 135)
+    minutes = max(1, int(desired_minutes))
+    if minutes <= 6:
+        target_total_words = max(180, minutes * 62)
+    else:
+        target_total_words = max(420, minutes * 80)
     rendered_slide_count = slide_count + 1
-    return max(32, min(76, target_total_words // max(rendered_slide_count, 1)))
+    return max(22, min(54, target_total_words // max(rendered_slide_count, 1)))
 
 
 def word_count(text: str) -> int:
@@ -488,35 +541,35 @@ def expand_speaker_text(speaker: str, slide_title: str, bullets: list[str], desi
 
     target_words = target_speaker_words(desired_minutes)
     if word_count(speaker) >= target_words:
-        return trim_speaker_text(speaker, target_words + 5)
+        return trim_speaker_text(speaker, target_words)
 
     additions = []
     clean_bullets = [re.sub(r"\s+", " ", bullet).strip(" .") for bullet in bullets if str(bullet).strip()]
-    for index, bullet in enumerate(clean_bullets[:4], start=1):
-        lead = "First" if index == 1 else "Next" if index == 2 else "Then" if index == 3 else "Finally"
-        additions.append(f"{lead}, the slide emphasizes {bullet.lower()} and connects it to the paper's main argument.")
-    additions.extend(
-        [
-            "The visual evidence should be read as support for this explanation rather than as a separate result.",
-            "This point also prepares the next part of the talk, where the method and experiments are tied together.",
-            "For a longer presentation, the important takeaway is how this evidence changes the interpretation of the paper.",
-            "A careful reading should compare the claim, the evidence, and the limitation before drawing a conclusion.",
-            "This pacing gives the audience time to inspect the figure or table while the narration explains its role.",
-        ]
-    )
+    if int(desired_minutes) <= 6:
+        for bullet in clean_bullets[:2]:
+            additions.append(f"Key evidence: {bullet.lower()}.")
+    else:
+        for bullet in clean_bullets[:3]:
+            additions.append(f"Evidence to inspect: {bullet.lower()}.")
+        additions.extend(
+            [
+                "Read the visual evidence as support for the claim.",
+                "Compare the claim, evidence, and limitation before drawing a conclusion.",
+            ]
+        )
     for addition in additions:
         if word_count(speaker) >= target_words:
             break
         speaker = f"{speaker} {addition}"
-    return trim_speaker_text(speaker, target_words + 5)
+    return trim_speaker_text(speaker, target_words)
 
 
 def tts_pacing_for_minutes(desired_minutes: int) -> dict[str, float]:
     minutes = max(1, int(desired_minutes))
     if minutes >= 8:
-        return {"voice_speed": 0.55, "sentence_pause": 1.1}
+        return {"voice_speed": 0.7, "sentence_pause": 0.45}
     if minutes >= 5:
-        return {"voice_speed": 0.55, "sentence_pause": 1.1}
+        return {"voice_speed": 0.52, "sentence_pause": 0.4}
     return {"voice_speed": 1.0, "sentence_pause": 0.0}
 
 
@@ -822,7 +875,7 @@ def condition_audio_files(audio_dir: Path) -> dict[str, Any]:
     if not files:
         return {"changed": False, "files": 0}
 
-    audio_filter = "alimiter=limit=0.75:attack=5:release=100:level=false,volume=0.88"
+    audio_filter = "loudnorm=I=-18:TP=-2.5:LRA=11,alimiter=limit=0.82:attack=5:release=100:level=false"
     for wav_path in files:
         temp_path = wav_path.with_suffix(".conditioned.wav")
         run(
@@ -1182,10 +1235,10 @@ def build_page_clips(result_dir: Path, slide_count: int) -> Path:
 
 def burn_subtitles(video_in: Path, srt_path: Path, video_out: Path) -> None:
     style = (
-        "FontName=Arial,FontSize=12,PrimaryColour=&H00FFFFFF,"
+        "FontName=Arial,FontSize=15,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BackColour=&H00000000,"
         "BorderStyle=1,Outline=1,Shadow=0,Alignment=2,"
-        "MarginL=80,MarginR=80,MarginV=12"
+        "MarginL=90,MarginR=90,MarginV=16"
     )
     sub_path = srt_path.resolve().as_posix().replace(":", "\\:").replace("'", "\\'")
     run(

@@ -37,12 +37,23 @@ def transcribe_with_whisperx(audio_path, lang="en", device="cuda" if torch.cuda.
     text = " ".join(seg["text"].strip() for seg in segments)
     return text
 
+
+def sanitize_reference_text(ref_text):
+    if ref_text is None:
+        return None
+    if re.search(r"show\s+runs|sports\s+and\s+politics|hosted\s+by\s+someone", ref_text, flags=re.IGNORECASE):
+        return "This is a calm academic reference voice for clear presentation narration."
+    cleaned = re.sub(r"\b24\s*[-/]\s*7\b", "all day", ref_text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\btwenty\s+four\s+seven\b", "all day", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or None
+
 def inference_f5(text_prompt, save_path, ref_audio, ref_text, f5tts=None, speed=1.0):
     F5TTS = load_f5tts_class()
     synthesizer = f5tts or F5TTS()
     synthesizer.infer(
         ref_file=ref_audio,
-        ref_text=ref_text,
+        ref_text=sanitize_reference_text(ref_text),
         gen_text=text_prompt,
         speed=speed,
         file_wave=save_path,
@@ -170,6 +181,7 @@ def synthesize_slide_audio(
     os.makedirs(speech_save_dir, exist_ok=True)
     if ref_text is None:
         ref_text = transcribe_with_whisperx(ref_audio)
+    ref_text = sanitize_reference_text(ref_text)
 
     F5TTS = load_f5tts_class() if model_type == "f5" else None
     f5tts = F5TTS() if model_type == "f5" else None

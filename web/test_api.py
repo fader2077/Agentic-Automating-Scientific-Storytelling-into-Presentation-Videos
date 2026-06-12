@@ -54,6 +54,8 @@ from src.real_pipeline import (
     build_srt_from_speech_manifest,
     ensure_reference_audio,
     expand_speaker_text,
+    resolve_reference_voice,
+    sanitize_reference_text,
     compact_slide_caption,
     compact_slide_captions,
     split_subtitle_cues,
@@ -236,12 +238,14 @@ def main() -> None:
             assert restore_skills.status_code == 200
 
             assert target_content_slide_count(6) <= 14
-            assert target_speaker_words(10) >= 60
+            assert target_speaker_words(6) <= 30
+            assert target_speaker_words(10) >= 40
             long_speaker = expand_speaker_text("This slide introduces the method.", "Method", ["contrastive training", "backdoor robustness"], 10)
-            assert len(long_speaker.split()) >= 60
-            assert tts_pacing_for_minutes(6)["voice_speed"] <= 0.56
+            assert len(long_speaker.split()) >= 30
+            assert tts_pacing_for_minutes(6)["voice_speed"] <= 0.75
+            assert tts_pacing_for_minutes(6)["sentence_pause"] >= 0.3
             assert tts_pacing_for_minutes(10)["voice_speed"] <= 0.9
-            assert tts_pacing_for_minutes(10)["sentence_pause"] >= 1.0
+            assert tts_pacing_for_minutes(10)["sentence_pause"] >= 0.4
             assert len(split_narration_chunks("One sentence. " * 40, max_chars=80)) > 1
             subtitle_cues = split_subtitle_cues("This is a long subtitle sentence that should not cover the slide content. " * 4)
             assert len(subtitle_cues) > 2
@@ -276,11 +280,24 @@ def main() -> None:
             manifest_srt = fixture_dir / "manifest.srt"
             assert build_srt_from_speech_manifest(manifest_path, manifest_audio, manifest_srt) is True
             assert "First full subtitle sentence" in manifest_srt.read_text(encoding="utf-8")
+            contaminated_time_phrase = "24" + "-7"
+            contaminated_topic_phrase = "sports and " + "politics"
+            contaminated_show_phrase = "show " + "runs"
+            assert contaminated_time_phrase not in sanitize_reference_text(f"A {contaminated_show_phrase} {contaminated_time_phrase} with a host.")
+            assert "sports" not in sanitize_reference_text(
+                f"to experts to discuss about {contaminated_topic_phrase}. Now imagine a {contaminated_show_phrase} {contaminated_time_phrase}."
+            )
             assert audit_asset_caption("%%%% $$$$ @@@@ \u03b1\u03b2\u03b3", "chart", 7) == "OCR chart from page 7"
 
             fallback_ref = ensure_reference_audio(str(fixture_dir / "missing_reference.wav"), fixture_dir)
             assert fallback_ref.exists()
             assert fallback_ref.suffix == ".wav"
+            resolved_ref, resolved_text = resolve_reference_voice(str(fixture_dir / "missing_reference_again.wav"), f"A {contaminated_show_phrase} {contaminated_time_phrase}.", fixture_dir)
+            assert resolved_ref.exists()
+            assert resolved_text is not None and contaminated_time_phrase not in resolved_text
+            assert contaminated_show_phrase not in resolved_text
+            if "basic_ref_en.wav" in str(resolved_ref):
+                assert resolved_text == "Some call me nature, others call me mother nature."
             cursor_input = fixture_dir / "cursor_input.mp4"
             cursor_output = fixture_dir / "cursor_output.mp4"
             cursor_json = fixture_dir / "cursor_overlay.json"

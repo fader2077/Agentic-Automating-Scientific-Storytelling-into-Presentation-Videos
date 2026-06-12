@@ -854,6 +854,7 @@ def finalize_task_artifacts(task: dict[str, Any], metadata: dict[str, Any]) -> N
         "slides_pdf": artifact_paths.get("slides_pdf"),
         "slides_tex": artifact_paths.get("slides_tex"),
         "script": artifact_paths.get("script"),
+        "speech_manifest": artifact_paths.get("speech_manifest"),
         "cursor": artifact_paths.get("cursor"),
         "subtitles": artifact_paths.get("subtitles"),
         "video": artifact_paths.get("video"),
@@ -872,10 +873,7 @@ def build_pipeline_command(task: dict[str, Any]) -> list[str]:
     settings = task["settings"]
     python_exe = str(resolve_pipeline_python())
     ref_audio = ROOT.parent / "assets" / "demo" / "reference.wav"
-    ref_text = (
-        "to experts to discuss about sports and politics. Now imagine a show runs 24-7, "
-        "hosted by someone you like, covering topics you care about."
-    )
+    ref_text = "Some call me nature, others call me mother nature."
     return [
         python_exe,
         str(PIPELINE_SCRIPT),

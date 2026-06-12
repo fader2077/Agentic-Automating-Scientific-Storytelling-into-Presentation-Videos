@@ -104,7 +104,7 @@ The preferred reference voice path is:
 assets/demo/reference.wav
 ```
 
-If that file is missing, `src/real_pipeline.py` creates `reference_fallback.wav` inside the job result directory so F5TTS does not fail with `FileNotFoundError`. Voice quality is better when a real reference wav and matching transcript are provided.
+If that file is missing, `src/real_pipeline.py` first uses the bundled F5TTS `basic_ref_en.wav` with its matching clean transcript, `Some call me nature, others call me mother nature.` If the bundled reference is unavailable, the pipeline creates a neutral `reference_fallback.wav` inside the job result directory so F5TTS does not fail with `FileNotFoundError`. Contaminated demo wording is filtered before synthesis. Voice quality is better when a real reference wav and matching transcript are provided.
 
 Cursor overlay does not require a repository image asset. `src/cursor_overlay.py` draws the cursor directly with an ffmpeg `drawbox` filter from `cursor.json`.
 
