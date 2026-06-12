@@ -47,7 +47,7 @@ from web.app import (
     write_task,
 )
 
-from src.real_pipeline import ensure_reference_audio
+from src.real_pipeline import ensure_cursor_image, ensure_reference_audio
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
@@ -199,6 +199,13 @@ def main() -> None:
             agents_payload = agents.json()
             assert any(item["key"] == "SpeechAgent" for item in agents_payload)
             assert any(tool["key"] == "f5_queue" for item in agents_payload for tool in item["tools"])
+            agent_graph = client.get("/api/agent-graph")
+            assert agent_graph.status_code == 200
+            graph_payload = agent_graph.json()
+            assert graph_payload["framework"] == "langgraph"
+            assert graph_payload["compiled"] is True
+            assert graph_payload["visited_check"][0] == "IngestionAgent"
+            assert graph_payload["visited_check"][-1] == "RenderAgent"
             skills = client.get("/api/agents/SpeechAgent/skills.md")
             assert skills.status_code == 200
             assert "F5TTS synthesis" in skills.text
@@ -213,7 +220,10 @@ def main() -> None:
 
             fallback_ref = ensure_reference_audio(str(fixture_dir / "missing_reference.wav"), fixture_dir)
             assert fallback_ref.exists()
-            assert fallback_ref.name == "reference_fallback.wav"
+            assert fallback_ref.suffix == ".wav"
+            cursor_image = ensure_cursor_image(fixture_dir / "cursor_red.png")
+            assert cursor_image.exists()
+            assert cursor_image.stat().st_size > 0
 
 
             upload = client.post(

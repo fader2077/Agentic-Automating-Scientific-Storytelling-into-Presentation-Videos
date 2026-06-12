@@ -20,6 +20,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from src.agentic_graph import agentic_graph_status
+
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -1108,6 +1110,11 @@ def get_agent_catalog() -> list[dict[str, Any]]:
     return agent_catalog()
 
 
+@app.get("/api/agent-graph")
+def get_agent_graph() -> dict[str, Any]:
+    return agentic_graph_status(AGENTS_MANIFEST, TOOLS_MANIFEST)
+
+
 @app.get("/api/agents/{agent_key}/skills.md")
 def get_agent_skills(agent_key: str) -> FileResponse:
     path = resolve_agent_skills_md(agent_key)
@@ -1285,6 +1292,7 @@ def health() -> JSONResponse:
             "ollama_url": settings["ollama_url"],
             "gpu": gpu_status(),
             "pipeline_python": str(resolve_pipeline_python()),
+            "agentic_graph": agentic_graph_status(AGENTS_MANIFEST, TOOLS_MANIFEST),
             "queue": queue_state(),
         }
     )

@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import argparse
+import base64
 import html
 import json
 import math
@@ -11,6 +12,7 @@ import struct
 import subprocess
 import sys
 import time
+import importlib.util
 import urllib.error
 import urllib.request
 import wave
@@ -31,6 +33,11 @@ from speech_gen import tts_per_slide
 
 DEFAULT_MODEL = "qwen3.6:27b"
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+RED_CURSOR_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
+    "/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+F5_BASIC_REF_TEXT = "Some call me nature, others call me mother nature."
 
 
 class PipelineError(RuntimeError):
@@ -84,10 +91,51 @@ def ensure_reference_audio(ref_audio: str, result_dir: Path) -> Path:
     candidate = Path(ref_audio)
     if candidate.exists():
         return candidate
+    package_ref = find_f5_reference_audio()
+    if package_ref is not None:
+        return package_ref
     fallback = result_dir / "reference_fallback.wav"
     if not fallback.exists():
         write_fallback_reference_audio(fallback)
     return fallback
+
+
+def find_f5_reference_audio() -> Path | None:
+    try:
+        spec = importlib.util.find_spec("f5_tts")
+    except (ModuleNotFoundError, ValueError):
+        return None
+    if not spec or not spec.submodule_search_locations:
+        return None
+    package_root = Path(next(iter(spec.submodule_search_locations)))
+    candidate = package_root / "infer" / "examples" / "basic" / "basic_ref_en.wav"
+    return candidate if candidate.exists() else None
+
+
+def resolve_reference_voice(ref_audio: str, ref_text: str | None, result_dir: Path) -> tuple[Path, str | None]:
+    requested = Path(ref_audio)
+    if requested.exists():
+        return requested, ref_text
+    package_ref = find_f5_reference_audio()
+    if package_ref is not None:
+        return package_ref, ref_text or F5_BASIC_REF_TEXT
+    fallback = ensure_reference_audio(ref_audio, result_dir)
+    return fallback, ref_text or "Reference voice for generated academic narration."
+
+
+def ensure_cursor_image(cursor_img: Path) -> Path:
+    source = SRC / "cursor_image" / "red.png"
+    cursor_img.parent.mkdir(parents=True, exist_ok=True)
+    if source.exists():
+        shutil.copyfile(source, cursor_img)
+    else:
+        try:
+            from PIL import Image
+
+            Image.new("RGBA", (16, 16), (220, 32, 32, 255)).save(cursor_img)
+        except Exception:
+            cursor_img.write_bytes(base64.b64decode(RED_CURSOR_PNG))
+    return cursor_img
 
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -660,6 +708,69 @@ def ffprobe_duration(path: Path) -> float:
     return float(result.stdout.strip())
 
 
+def numeric_wav_files(audio_dir: Path) -> list[Path]:
+    return sorted(audio_dir.glob("*.wav"), key=lambda item: int(item.stem) if item.stem.isdigit() else item.stem)
+
+
+def atempo_filter(speed: float) -> str:
+    factors: list[float] = []
+    remaining = speed
+    while remaining > 2.0:
+        factors.append(2.0)
+        remaining /= 2.0
+    while remaining < 0.5:
+        factors.append(0.5)
+        remaining /= 0.5
+    factors.append(remaining)
+    return ",".join(f"atempo={factor:.6g}" for factor in factors)
+
+
+def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dict[str, Any]:
+    files = numeric_wav_files(audio_dir)
+    durations = [ffprobe_duration(path) for path in files]
+    original_total = sum(durations)
+    target_total = max(30.0, float(desired_minutes) * 60.0)
+    if not files or original_total <= 0:
+        return {"changed": False, "original_total": round(original_total, 3), "target_total": round(target_total, 3)}
+
+    speed = original_total / target_total
+    if 0.95 <= speed <= 1.08:
+        return {
+            "changed": False,
+            "original_total": round(original_total, 3),
+            "target_total": round(target_total, 3),
+            "speed": round(speed, 3),
+        }
+
+    audio_filter = atempo_filter(speed)
+    for wav_path in files:
+        temp_path = wav_path.with_suffix(".normalized.wav")
+        run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(wav_path),
+                "-filter:a",
+                audio_filter,
+                str(temp_path),
+            ],
+            timeout=180,
+        )
+        os.replace(temp_path, wav_path)
+    normalized_total = sum(ffprobe_duration(path) for path in files)
+    return {
+        "changed": True,
+        "original_total": round(original_total, 3),
+        "target_total": round(target_total, 3),
+        "normalized_total": round(normalized_total, 3),
+        "speed": round(speed, 3),
+        "filter": audio_filter,
+    }
+
+
 def build_srt_from_script(script_path: Path, audio_dir: Path, srt_path: Path) -> None:
     pages = [p.strip() for p in script_path.read_text(encoding="utf-8").split("###") if p.strip()]
     current = 0.0
@@ -885,17 +996,23 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     t = time.time()
     emit_event("start", "tts", "F5TTS synthesis started.", {"engine": "F5TTS"})
     audio_dir = result_dir / "audio"
-    ref_audio_path = ensure_reference_audio(args.ref_audio, result_dir)
+    clean_dir(audio_dir)
+    ref_audio_path, ref_text = resolve_reference_voice(args.ref_audio, args.ref_text, result_dir)
     if str(ref_audio_path) != args.ref_audio:
-        emit_event("info", "tts", "Reference audio missing; generated fallback reference wav.", {"ref_audio": str(ref_audio_path)})
+        emit_event("info", "tts", "Reference audio missing; using fallback reference voice.", {"ref_audio": str(ref_audio_path)})
     tts_per_slide(
         model_type="f5",
         script_path=str(script_path),
         speech_save_dir=str(audio_dir),
         ref_audio=str(ref_audio_path),
-        ref_text=args.ref_text,
+        ref_text=ref_text,
     )
-    metadata["steps"]["tts"] = {"seconds": round(time.time() - t, 3), "audio_files": len(list(audio_dir.glob("*.wav")))}
+    duration_fit = normalize_audio_total_duration(audio_dir, args.desired_minutes)
+    metadata["steps"]["tts"] = {
+        "seconds": round(time.time() - t, 3),
+        "audio_files": len(list(audio_dir.glob("*.wav"))),
+        "duration_fit": duration_fit,
+    }
     emit_event("done", "tts", "F5TTS synthesis completed.", metadata["steps"]["tts"])
 
     t = time.time()
@@ -916,7 +1033,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     srt_path = result_dir / "subtitles.srt"
     build_srt_from_script(script_path, audio_dir, srt_path)
     cursor_img = result_dir / "cursor_red.png"
-    shutil.copyfile(SRC / "cursor_image" / "red.png", cursor_img)
+    ensure_cursor_image(cursor_img)
     merged = build_page_clips(result_dir, slide_count)
     with_cursor = result_dir / "2_merage.mp4"
     try:

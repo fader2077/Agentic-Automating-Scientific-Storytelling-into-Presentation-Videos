@@ -5,6 +5,7 @@ pymupdf
 python-multipart
 requests
 numpy
+langgraph
 torch
 torchaudio
 f5-tts

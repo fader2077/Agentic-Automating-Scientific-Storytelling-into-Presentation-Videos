@@ -14,6 +14,7 @@ A local control room that turns an uploaded scientific paper into an academic pr
 - Generate slide narration, subtitles, cursor paths, per-slide speech, and final MP4.
 - Inspect every agent and tool used by the runtime.
 - Open and edit each agent `skills.md` from the web UI.
+- Inspect the LangGraph-backed agent handoff graph at `/api/agent-graph`.
 
 ## Agents
 
@@ -26,6 +27,16 @@ A local control room that turns an uploaded scientific paper into an academic pr
 - `RenderAgent`: packages slide images, audio, subtitles, cursor overlay, and final MP4 artifacts through ffmpeg.
 
 Each agent has an editable skills file under `src/agents/*/skills.md`. The web UI `Runtime capabilities` panel has `Open` and `Edit skills.md` controls for each agent.
+
+## Agentic Graph
+
+The control room builds an explicit LangGraph DAG from `src/agents/manifest.json` and `src/tools/manifest.json`:
+
+```text
+IngestionAgent -> PlannerAgent -> SlideBuilderAgent -> ScriptAgent -> SpeechAgent -> GroundingAgent -> RenderAgent
+```
+
+The graph is exposed by `/api/agent-graph` and included in `/api/health`. Each graph node owns its declared skills and tools. The real pipeline subprocess still performs the heavy OCR, model, TTS, cursor, and ffmpeg work; LangGraph provides the inspectable agent handoff contract in the web orchestration layer.
 
 ## Tools
 
@@ -67,6 +78,7 @@ Install these on the local machine:
 - Ollama running locally at `http://127.0.0.1:11434`
 - Ollama model `qwen3.6:27b` or another selected local text model
 - Optional local vision model listed by Ollama for future vision calls
+- LangGraph for the inspectable agent handoff DAG
 - F5TTS dependencies
 - ffmpeg and ffprobe
 - LaTeX distribution with `pdflatex`
@@ -87,6 +99,10 @@ assets/demo/reference.wav
 ```
 
 If that file is missing, `src/real_pipeline.py` creates `reference_fallback.wav` inside the job result directory so F5TTS does not fail with `FileNotFoundError`. Voice quality is better when a real reference wav and matching transcript are provided.
+
+If `src/cursor_image/red.png` is missing, the pipeline writes a tiny fallback red cursor image into the job directory before ffmpeg composition.
+
+After F5TTS synthesis, the pipeline measures total narration duration and applies ffmpeg `atempo` normalization when needed so the final MP4 stays close to the requested target minutes.
 
 ## Run Web UI
 
