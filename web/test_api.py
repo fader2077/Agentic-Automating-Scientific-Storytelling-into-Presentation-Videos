@@ -246,10 +246,13 @@ def main() -> None:
 
             assert target_content_slide_count(6) <= 14
             assert target_content_slide_count(6, 12) == 10
-            assert 36 <= target_speaker_words(6, 12) <= 48
-            assert 24 <= target_speaker_words(10) <= 52
+            assert 44 <= target_speaker_words(6, 12) <= 56
+            assert 24 <= target_speaker_words(10) <= 60
             long_speaker = expand_speaker_text("This slide introduces the method.", "Method", ["contrastive training", "backdoor robustness"], 10)
             assert len(long_speaker.split()) >= 20
+            natural_speaker = expand_speaker_text("This slide introduces the method.", "Method", ["contrastive training", "backdoor robustness"], 6, 42)
+            assert "Key evidence" not in natural_speaker
+            assert "Evidence to inspect" not in natural_speaker
             assert tts_pacing_for_minutes(6, 12)["voice_speed"] == 1.0
             assert tts_pacing_for_minutes(6, 12)["sentence_pause"] == 0.0
             assert tts_pacing_for_minutes(10)["voice_speed"] == 1.0
@@ -258,6 +261,8 @@ def main() -> None:
             subtitle_cues = split_subtitle_cues("This is a long subtitle sentence that should not cover the slide content. " * 4)
             assert len(subtitle_cues) > 2
             assert max(len(cue.replace("\n", " ")) for cue in subtitle_cues) <= 60
+            wide_subtitle_cues = split_subtitle_cues("This is a wider subtitle line that should stay readable without covering most of the slide. " * 4, max_words=18, max_chars=116)
+            assert max(len(cue.replace("\n", " ")) for cue in wide_subtitle_cues) <= 116
             compact_caption = compact_slide_caption("This is a long subtitle sentence that should not cover the slide content.")
             assert 3 <= len(compact_caption.split()) <= 7
             compact_captions = compact_slide_captions("This is a long subtitle sentence. A second caption should stay readable and aligned.")

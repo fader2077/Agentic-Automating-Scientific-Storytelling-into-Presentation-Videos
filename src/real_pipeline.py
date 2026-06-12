@@ -479,6 +479,8 @@ Hard constraints:
 - Each slide has 2 to 4 bullets.
 - Each bullet must be under 18 words.
 - Each speaker field must be 1 to 2 sentences and stay near {words_per_slide} spoken words.
+- Speaker narration must sound like a natural academic talk, not a checklist.
+- Do not start slide narration with repeated evidence labels, ordinal labels, or takeaway labels.
 - No invented numeric results unless present in the paper text.
 - Avoid citations and bibliography slides.
 - Avoid appendix/checklist content.
@@ -506,22 +508,66 @@ def trim_speaker_text(speaker: str, max_words: int) -> str:
     if word_count(speaker) <= max_words:
         return speaker
 
+    allowance = max_words + 8
     sentences = re.split(r"(?<=[.!?])\s+", speaker)
     kept: list[str] = []
+    kept_words = 0
     for sentence in sentences:
-        candidate = " ".join(kept + [sentence]).strip()
-        if candidate and word_count(candidate) <= max_words:
-            kept.append(sentence)
-        elif kept:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        sentence_words = word_count(sentence)
+        if kept and kept_words + sentence_words > allowance:
+            break
+        kept.append(sentence)
+        kept_words += sentence_words
+        if kept_words >= max_words:
             break
     if kept:
         return " ".join(kept).strip()
 
     words = re.findall(r"\S+", speaker)
-    trimmed = " ".join(words[:max_words]).rstrip(".,;:")
+    trimmed = " ".join(words[:allowance]).rstrip(".,;:")
     if trimmed and not trimmed.endswith((".", "!", "?")):
         trimmed += "."
     return trimmed
+
+
+def natural_followup_sentences(slide_title: str, bullets: list[str], desired_minutes: int) -> list[str]:
+    clean_bullets = [re.sub(r"\s+", " ", bullet).strip(" .") for bullet in bullets if str(bullet).strip()]
+    if not clean_bullets:
+        return ["This keeps the talk focused on the paper's main claim."]
+
+    title = slide_title.lower()
+    first = clean_bullets[0].lower()
+    second = clean_bullets[1].lower() if len(clean_bullets) > 1 else first
+    variant = sum(ord(ch) for ch in f"{slide_title} {first} {second}") % 3
+    if any(term in title for term in ["problem", "threat", "attack", "vulnerab"]):
+        templates = [
+            (f"This sets up why {first} matters for the rest of the paper.", f"It also explains why {second} cannot be treated as a minor detail."),
+            (f"Here, {first} is the pressure point behind the paper's threat model.", f"The slide also shows why {second} needs direct evaluation."),
+            (f"The useful reading is that {first} changes how the rest of the result should be judged.", f"That makes {second} part of the core risk, not background detail."),
+        ]
+    elif any(term in title for term in ["method", "stage", "framework", "pipeline", "partition", "filter", "unlearning"]):
+        templates = [
+            (f"The important step is how {first} supports the defense pipeline.", f"That choice makes {second} easier to interpret in the later results."),
+            (f"The method is easier to follow if {first} is treated as the organizing step.", f"From there, {second} becomes the next constraint the system has to satisfy."),
+            (f"At this point, {first} explains the design logic rather than just another component.", f"The role of {second} is to keep that design tied to measurable behavior."),
+        ]
+    elif any(term in title for term in ["experiment", "result", "metric", "setup", "performance"]):
+        templates = [
+            (f"The main reading cue is whether {first} is reflected in the reported outcomes.", f"This makes {second} useful for judging the method's reliability."),
+            (f"For the results, {first} gives the most direct way to read the comparison.", f"The second check is whether {second} stays consistent across settings."),
+            (f"The experiment should be read through {first}, since it connects the setup to the claim.", f"Then {second} helps decide whether the gain is robust or narrow."),
+        ]
+    else:
+        templates = [
+            (f"This point anchors the slide around {first}.", f"The next detail to watch is {second}."),
+            (f"The slide mainly asks the audience to keep {first} in view.", f"With that context, {second} becomes easier to place."),
+            (f"A natural way to read this slide is through {first}.", f"That framing leaves {second} as the supporting detail."),
+        ]
+    sentences = list(templates[variant])
+    return sentences
 
 
 def expand_speaker_text(
@@ -541,24 +587,12 @@ def expand_speaker_text(
     if word_count(speaker) >= target_words:
         return trim_speaker_text(speaker, target_words)
 
-    additions = []
-    clean_bullets = [re.sub(r"\s+", " ", bullet).strip(" .") for bullet in bullets if str(bullet).strip()]
-    if int(desired_minutes) <= 6:
-        for bullet in clean_bullets[:2]:
-            additions.append(f"Key evidence: {bullet.lower()}.")
-    else:
-        for bullet in clean_bullets[:3]:
-            additions.append(f"Evidence to inspect: {bullet.lower()}.")
-        additions.extend(
-            [
-                "Read the visual evidence as support for the claim.",
-                "Compare the claim, evidence, and limitation before drawing a conclusion.",
-            ]
-        )
+    additions = natural_followup_sentences(slide_title, bullets, desired_minutes)
     for addition in additions:
         if word_count(speaker) >= target_words:
             break
-        speaker = f"{speaker} {addition}"
+        if word_count(speaker) + word_count(addition) <= target_words + 8:
+            speaker = f"{speaker} {addition}"
     return trim_speaker_text(speaker, target_words)
 
 
@@ -869,27 +903,6 @@ def atempo_filter(speed: float) -> str:
     return ",".join(f"atempo={factor:.6g}" for factor in factors)
 
 
-def append_silence_to_wav(wav_path: Path, pad_seconds: float) -> None:
-    if pad_seconds <= 0.05:
-        return
-    temp_path = wav_path.with_suffix(".padded.wav")
-    run(
-        [
-            "ffmpeg",
-            "-y",
-            "-loglevel",
-            "error",
-            "-i",
-            str(wav_path),
-            "-af",
-            f"apad=pad_dur={pad_seconds:.3f}",
-            str(temp_path),
-        ],
-        timeout=180,
-    )
-    os.replace(temp_path, wav_path)
-
-
 def condition_audio_files(audio_dir: Path) -> dict[str, Any]:
     files = numeric_wav_files(audio_dir)
     if not files:
@@ -943,21 +956,14 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
         }
 
     if speed < 0.98:
-        missing = target_total - original_total
-        total_weight = sum(max(duration, 1.0) for duration in durations)
-        for wav_path, duration in zip(files, durations):
-            share = missing * (max(duration, 1.0) / total_weight)
-            append_silence_to_wav(wav_path, share)
-        padded_total = sum(ffprobe_duration(path) for path in files)
         return {
-            "changed": True,
-            "mode": "silence_padding",
+            "changed": False,
+            "mode": "short_natural",
             "original_total": round(original_total, 3),
             "target_total": round(target_total, 3),
             "requested_total": round(requested_total, 3),
-            "padded_total": round(padded_total, 3),
             "speed": round(speed, 3),
-            "reason": "Used distributed pauses instead of slowing synthesized speech.",
+            "reason": "Accepted shorter natural narration instead of adding silence or slowing synthesized speech.",
         }
 
     if original_total <= requested_total + 30.0:
@@ -1102,7 +1108,7 @@ def build_srt_from_speech_manifest(manifest_path: Path, audio_dir: Path, srt_pat
             chunk_start = current + float(chunk.get("start", 0.0))
             chunk_end = current + float(chunk.get("end", 0.0))
             chunk_end = min(current + slide_duration, max(chunk_start + 0.4, chunk_end))
-            cues = split_subtitle_cues(text, max_words=16, max_chars=104)
+            cues = split_subtitle_cues(text, max_words=18, max_chars=116)
             if not cues:
                 continue
             cue_duration = max(0.5, (chunk_end - chunk_start) / len(cues))
@@ -1163,7 +1169,7 @@ def build_srt_from_audio_transcript(audio_dir: Path, srt_path: Path, transcript_
             start = current + max(0.0, float(segment.get("start", 0.0)))
             end = current + min(slide_duration, max(float(segment.get("end", 0.0)), float(segment.get("start", 0.0)) + 0.5))
             end = min(current + slide_duration, max(start + 0.5, end))
-            cues = split_subtitle_cues(text, max_words=16, max_chars=104)
+            cues = split_subtitle_cues(text, max_words=18, max_chars=116)
             if not cues:
                 continue
             cue_duration = max(0.5, (end - start) / len(cues))
@@ -1173,8 +1179,10 @@ def build_srt_from_audio_transcript(audio_dir: Path, srt_path: Path, transcript_
                 slide_entries.append((cue_start, cue_end, cue))
             slide_segments.append({"text": text, "start": round(start - current, 3), "end": round(end - current, 3)})
         for local_idx, (start, end, cue) in enumerate(slide_entries):
+            if local_idx == 0:
+                start = current + 0.05
             if local_idx + 1 < len(slide_entries):
-                end = max(end, slide_entries[local_idx + 1][0] - 0.02)
+                end = max(end, slide_entries[local_idx + 1][0])
             else:
                 end = max(end, current + slide_duration - 0.05)
             entries.append((entry_idx, start, min(current + slide_duration, end), cue))
@@ -1338,7 +1346,7 @@ def burn_subtitles(video_in: Path, srt_path: Path, video_out: Path) -> None:
         "FontName=Arial,FontSize=14,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BackColour=&H00000000,"
         "BorderStyle=1,Outline=1,Shadow=0,Alignment=2,"
-        "MarginL=36,MarginR=36,MarginV=16"
+        "MarginL=24,MarginR=24,MarginV=16"
     )
     sub_path = srt_path.resolve().as_posix().replace(":", "\\:").replace("'", "\\'")
     run(
