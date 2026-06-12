@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import operator
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypedDict
@@ -14,6 +15,25 @@ class AgentGraphState(TypedDict, total=False):
     error_stages: Annotated[list[str], operator.add]
 
 
+class PacingGraphState(TypedDict, total=False):
+    desired_minutes: int
+    requested_total_slides: int | None
+    ocr_asset_count: int
+    total_slides: int
+    content_slides: int
+    target_seconds: float
+    min_seconds: float
+    max_seconds: float
+    target_total_words: int
+    title_words: int
+    words_per_slide: int
+    voice_speed: float
+    sentence_pause: float
+    subtitle_source: str
+    visited: Annotated[list[str], operator.add]
+    tool_calls: Annotated[list[str], operator.add]
+
+
 AGENT_FLOW = [
     "SupervisorAgent",
     "IngestionAgent",
@@ -24,6 +44,154 @@ AGENT_FLOW = [
     "GroundingAgent",
     "RenderAgent",
 ]
+
+
+def clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def choose_total_slides(desired_minutes: int, requested_total_slides: int | None) -> int:
+    if requested_total_slides:
+        return int(clamp(requested_total_slides, 5, 30))
+    minutes = max(1, int(desired_minutes))
+    if minutes <= 3:
+        return int(clamp(2 + minutes * 3, 8, 11))
+    if minutes <= 6:
+        return 12
+    return int(clamp(round(minutes * 1.6) + 2, 14, 22))
+
+
+def pacing_supervisor_node(state: PacingGraphState) -> PacingGraphState:
+    return {
+        "visited": ["PacingSupervisorAgent"],
+        "tool_calls": ["PacingSupervisorAgent.set_duration_band"],
+        "target_seconds": float(max(60, int(state.get("desired_minutes", 6)) * 60)),
+        "min_seconds": float(max(45, int(state.get("desired_minutes", 6)) * 60 - 60)),
+        "max_seconds": float(int(state.get("desired_minutes", 6)) * 60 + 60),
+    }
+
+
+def slide_allocator_node(state: PacingGraphState) -> PacingGraphState:
+    total_slides = choose_total_slides(int(state.get("desired_minutes", 6)), state.get("requested_total_slides"))
+    return {
+        "visited": ["PlannerAgent"],
+        "tool_calls": ["PlannerAgent.allocate_slide_count"],
+        "total_slides": total_slides,
+        "content_slides": max(1, total_slides - 2),
+    }
+
+
+def script_budget_node(state: PacingGraphState) -> PacingGraphState:
+    target_seconds = float(state.get("target_seconds", 360.0))
+    content_slides = max(1, int(state.get("content_slides", 11)))
+    title_words = 24
+    # SpeechAgent keeps F5TTS at natural speed and adapts duration by script
+    # budget, not by forcing slow synthesis.
+    target_total_words = int(clamp(target_seconds * 1.28, 220, 980))
+    words_per_slide = int(clamp(math.floor((target_total_words - title_words) / content_slides), 18, 52))
+    return {
+        "visited": ["ScriptAgent"],
+        "tool_calls": ["ScriptAgent.assign_slide_word_budget"],
+        "target_total_words": target_total_words,
+        "title_words": title_words,
+        "words_per_slide": words_per_slide,
+    }
+
+
+def speech_pacing_node(state: PacingGraphState) -> PacingGraphState:
+    return {
+        "visited": ["SpeechAgent"],
+        "tool_calls": ["SpeechAgent.choose_natural_f5_pacing"],
+        "voice_speed": 1.0,
+        "sentence_pause": 0.0,
+    }
+
+
+def subtitle_policy_node(state: PacingGraphState) -> PacingGraphState:
+    return {
+        "visited": ["SubtitleAgent"],
+        "tool_calls": ["SubtitleAgent.select_audio_transcript_subtitles"],
+        "subtitle_source": "asr",
+    }
+
+
+def build_pacing_langgraph() -> Any:
+    from langgraph.graph import END, START, StateGraph
+
+    graph = StateGraph(PacingGraphState)
+    graph.add_node("pacing_supervisor", pacing_supervisor_node)
+    graph.add_node("slide_allocator", slide_allocator_node)
+    graph.add_node("script_budget", script_budget_node)
+    graph.add_node("speech_pacing", speech_pacing_node)
+    graph.add_node("subtitle_policy", subtitle_policy_node)
+    graph.add_edge(START, "pacing_supervisor")
+    graph.add_edge("pacing_supervisor", "slide_allocator")
+    graph.add_edge("slide_allocator", "script_budget")
+    graph.add_edge("script_budget", "speech_pacing")
+    graph.add_edge("speech_pacing", "subtitle_policy")
+    graph.add_edge("subtitle_policy", END)
+    return graph.compile()
+
+
+def build_adaptive_pacing_plan(
+    desired_minutes: int,
+    requested_total_slides: int | None = None,
+    ocr_asset_count: int = 0,
+) -> dict[str, Any]:
+    initial: PacingGraphState = {
+        "desired_minutes": int(desired_minutes),
+        "requested_total_slides": requested_total_slides,
+        "ocr_asset_count": int(ocr_asset_count),
+        "visited": [],
+        "tool_calls": [],
+    }
+    try:
+        result = build_pacing_langgraph().invoke(initial)
+    except Exception:
+        total_slides = choose_total_slides(desired_minutes, requested_total_slides)
+        content_slides = max(1, total_slides - 2)
+        target_seconds = float(max(60, int(desired_minutes) * 60))
+        target_total_words = int(clamp(target_seconds * 1.28, 220, 980))
+        result = {
+            **initial,
+            "visited": ["PacingSupervisorAgent", "PlannerAgent", "ScriptAgent", "SpeechAgent", "SubtitleAgent"],
+            "tool_calls": [
+                "PacingSupervisorAgent.set_duration_band",
+                "PlannerAgent.allocate_slide_count",
+                "ScriptAgent.assign_slide_word_budget",
+                "SpeechAgent.choose_natural_f5_pacing",
+                "SubtitleAgent.select_audio_transcript_subtitles",
+            ],
+            "target_seconds": target_seconds,
+            "min_seconds": float(max(45, int(desired_minutes) * 60 - 60)),
+            "max_seconds": float(int(desired_minutes) * 60 + 60),
+            "total_slides": total_slides,
+            "content_slides": content_slides,
+            "target_total_words": target_total_words,
+            "title_words": 24,
+            "words_per_slide": int(clamp(math.floor((target_total_words - 24) / content_slides), 18, 52)),
+            "voice_speed": 1.0,
+            "sentence_pause": 0.0,
+            "subtitle_source": "asr",
+        }
+    return {
+        "framework": "langgraph" if "PacingSupervisorAgent" in result.get("visited", []) else "fallback",
+        "desired_minutes": int(desired_minutes),
+        "requested_total_slides": requested_total_slides,
+        "total_slides": int(result.get("total_slides", choose_total_slides(desired_minutes, requested_total_slides))),
+        "content_slides": int(result.get("content_slides", max(1, choose_total_slides(desired_minutes, requested_total_slides) - 2))),
+        "target_seconds": float(result.get("target_seconds", max(60, int(desired_minutes) * 60))),
+        "min_seconds": float(result.get("min_seconds", max(45, int(desired_minutes) * 60 - 60))),
+        "max_seconds": float(result.get("max_seconds", int(desired_minutes) * 60 + 60)),
+        "target_total_words": int(result.get("target_total_words", 330)),
+        "title_words": int(result.get("title_words", 24)),
+        "words_per_slide": int(result.get("words_per_slide", 28)),
+        "voice_speed": float(result.get("voice_speed", 1.0)),
+        "sentence_pause": float(result.get("sentence_pause", 0.0)),
+        "subtitle_source": str(result.get("subtitle_source", "asr")),
+        "visited": result.get("visited", []),
+        "tool_calls": result.get("tool_calls", []),
+    }
 
 
 def read_manifest(path: Path) -> list[dict[str, Any]]:

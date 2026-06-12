@@ -27,6 +27,7 @@ if str(SRC) not in sys.path:
 
 from cursor_router import build_cursor_timeline
 from cursor_overlay import render_cursor_overlay_timeline
+from agentic_graph import build_adaptive_pacing_plan
 from speech_synth import synthesize_slide_audio
 
 
@@ -439,15 +440,17 @@ def compact_markdown(markdown: str, max_chars: int = 42000) -> str:
     return head + "\n\n[... middle content omitted for context budget ...]\n\n" + tail
 
 
-def build_deck_prompt(markdown: str, goal_prompt: str, desired_minutes: int) -> str:
-    slide_count = target_content_slide_count(desired_minutes)
+def build_deck_prompt(markdown: str, goal_prompt: str, desired_minutes: int, pacing_plan: dict[str, Any]) -> str:
+    slide_count = int(pacing_plan["content_slides"])
+    total_slides = int(pacing_plan["total_slides"])
+    words_per_slide = int(pacing_plan["words_per_slide"])
     return f"""
 /no_think
 You are generating a real academic presentation-video plan from OCR text.
 Return ONLY valid JSON. No markdown fences.
 
 Target:
-- {slide_count} slides.
+- {total_slides} final Beamer pages total: 1 title page, 1 roadmap page, and {slide_count} content slides.
 - Academic, concise, faithful to the paper.
 - Beamer slides will be produced from your JSON.
 - Narration must be English, specific, and paced for the requested video length.
@@ -472,37 +475,26 @@ JSON schema:
 }}
 
 Hard constraints:
-- Use {slide_count} slides exactly.
+- Return {slide_count} content slides exactly.
 - Each slide has 2 to 4 bullets.
 - Each bullet must be under 18 words.
-- Each speaker field must be 1 to 2 sentences and stay concise; the pipeline will enforce the final word budget.
+- Each speaker field must be 1 to 2 sentences and stay near {words_per_slide} spoken words.
 - No invented numeric results unless present in the paper text.
 - Avoid citations and bibliography slides.
 - Avoid appendix/checklist content.
+- Do not return title, agenda, outline, or roadmap as content slides; those pages are generated separately.
 
 OCR text:
 {compact_markdown(markdown, max_chars=14000)}
 """.strip()
 
 
-def target_content_slide_count(desired_minutes: int) -> int:
-    minutes = max(1, int(desired_minutes))
-    if minutes <= 3:
-        return max(8, minutes * 3)
-    if minutes <= 6:
-        return max(10, min(14, minutes * 2 + 2))
-    return max(14, min(18, minutes * 2))
+def target_content_slide_count(desired_minutes: int, target_slides: int | None = None) -> int:
+    return int(build_adaptive_pacing_plan(desired_minutes, target_slides)["content_slides"])
 
 
-def target_speaker_words(desired_minutes: int) -> int:
-    slide_count = target_content_slide_count(desired_minutes)
-    minutes = max(1, int(desired_minutes))
-    if minutes <= 6:
-        target_total_words = max(180, minutes * 62)
-    else:
-        target_total_words = max(420, minutes * 80)
-    rendered_slide_count = slide_count + 1
-    return max(22, min(54, target_total_words // max(rendered_slide_count, 1)))
+def target_speaker_words(desired_minutes: int, target_slides: int | None = None) -> int:
+    return int(build_adaptive_pacing_plan(desired_minutes, target_slides)["words_per_slide"])
 
 
 def word_count(text: str) -> int:
@@ -532,14 +524,20 @@ def trim_speaker_text(speaker: str, max_words: int) -> str:
     return trimmed
 
 
-def expand_speaker_text(speaker: str, slide_title: str, bullets: list[str], desired_minutes: int) -> str:
+def expand_speaker_text(
+    speaker: str,
+    slide_title: str,
+    bullets: list[str],
+    desired_minutes: int,
+    words_per_slide: int | None = None,
+) -> str:
     speaker = re.sub(r"\s+", " ", speaker).strip()
     if not speaker:
         speaker = f"This slide explains {slide_title}."
     if not speaker.endswith((".", "!", "?")):
         speaker += "."
 
-    target_words = target_speaker_words(desired_minutes)
+    target_words = words_per_slide or target_speaker_words(desired_minutes)
     if word_count(speaker) >= target_words:
         return trim_speaker_text(speaker, target_words)
 
@@ -564,36 +562,37 @@ def expand_speaker_text(speaker: str, slide_title: str, bullets: list[str], desi
     return trim_speaker_text(speaker, target_words)
 
 
-def tts_pacing_for_minutes(desired_minutes: int) -> dict[str, float]:
-    minutes = max(1, int(desired_minutes))
-    if minutes >= 8:
-        return {"voice_speed": 0.7, "sentence_pause": 0.45}
-    if minutes >= 5:
-        return {"voice_speed": 0.52, "sentence_pause": 0.4}
-    return {"voice_speed": 1.0, "sentence_pause": 0.0}
+def tts_pacing_for_minutes(desired_minutes: int, target_slides: int | None = None) -> dict[str, float]:
+    pacing_plan = build_adaptive_pacing_plan(desired_minutes, target_slides)
+    return {
+        "voice_speed": float(pacing_plan["voice_speed"]),
+        "sentence_pause": float(pacing_plan["sentence_pause"]),
+    }
 
 
-def validate_plan(plan: dict[str, Any], desired_minutes: int) -> dict[str, Any]:
+def validate_plan(plan: dict[str, Any], desired_minutes: int, pacing_plan: dict[str, Any]) -> dict[str, Any]:
     title = str(plan.get("title") or "Academic Paper Presentation").strip()
     authors = str(plan.get("authors") or "").strip()
     slides = plan.get("slides")
     if not isinstance(slides, list) or len(slides) < 5:
         raise PipelineError("Model plan has too few slides.")
 
-    max_slides = target_content_slide_count(desired_minutes)
-    slides = slides[:max_slides]
+    max_slides = int(pacing_plan["content_slides"])
     normalized = []
     for idx, slide in enumerate(slides, start=1):
         if not isinstance(slide, dict):
             continue
         slide_title = str(slide.get("title") or f"Slide {idx}").strip()
+        title_key = re.sub(r"[^a-z0-9]+", " ", slide_title.lower()).strip()
+        if title_key in {"title", "title slide", "roadmap", "talk roadmap", "agenda", "outline", "presentation outline"}:
+            continue
         bullets_raw = slide.get("bullets") or []
         bullets = [str(item).strip() for item in bullets_raw if str(item).strip()]
         bullets = bullets[:4]
         if len(bullets) < 2:
             bullets.extend(["Key idea from the paper", "Evidence and implication"])
         speaker = str(slide.get("speaker") or f"This slide explains {slide_title}.").strip()
-        speaker = expand_speaker_text(speaker, slide_title, bullets, desired_minutes)
+        speaker = expand_speaker_text(speaker, slide_title, bullets, desired_minutes, int(pacing_plan["words_per_slide"]))
         cursor_hint = str(slide.get("cursor_hint") or "main bullet list").strip()
         normalized.append(
             {
@@ -601,6 +600,27 @@ def validate_plan(plan: dict[str, Any], desired_minutes: int) -> dict[str, Any]:
                 "bullets": [b[:150] for b in bullets],
                 "speaker": speaker[:900],
                 "cursor_hint": cursor_hint[:80],
+            }
+        )
+        if len(normalized) >= max_slides:
+            break
+    while len(normalized) < max_slides:
+        idx = len(normalized) + 1
+        slide_title = f"Evidence Detail {idx}"
+        bullets = ["Paper evidence to inspect", "Implication for the main claim"]
+        speaker = expand_speaker_text(
+            f"This slide adds supporting evidence for the paper's main claim.",
+            slide_title,
+            bullets,
+            desired_minutes,
+            int(pacing_plan["words_per_slide"]),
+        )
+        normalized.append(
+            {
+                "title": slide_title,
+                "bullets": bullets,
+                "speaker": speaker[:900],
+                "cursor_hint": "main bullet list",
             }
         )
     if len(normalized) < 5:
@@ -1082,7 +1102,7 @@ def build_srt_from_speech_manifest(manifest_path: Path, audio_dir: Path, srt_pat
             chunk_start = current + float(chunk.get("start", 0.0))
             chunk_end = current + float(chunk.get("end", 0.0))
             chunk_end = min(current + slide_duration, max(chunk_start + 0.4, chunk_end))
-            cues = split_subtitle_cues(text, max_words=9, max_chars=68)
+            cues = split_subtitle_cues(text, max_words=16, max_chars=104)
             if not cues:
                 continue
             cue_duration = max(0.5, (chunk_end - chunk_start) / len(cues))
@@ -1094,6 +1114,86 @@ def build_srt_from_speech_manifest(manifest_path: Path, audio_dir: Path, srt_pat
         current += slide_duration
 
     write_srt_entries(entries, srt_path)
+    return True
+
+
+def build_srt_from_audio_transcript(audio_dir: Path, srt_path: Path, transcript_path: Path) -> bool:
+    files = numeric_wav_files(audio_dir)
+    if not files:
+        return False
+    try:
+        import torch
+        import whisperx
+    except Exception:
+        return False
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    compute_type = "float16" if device == "cuda" else "int8"
+    try:
+        model = whisperx.load_model("large-v2", device=device, compute_type=compute_type)
+    except Exception:
+        return False
+
+    entries: list[tuple[int, float, float, str]] = []
+    transcript_slides: list[dict[str, Any]] = []
+    entry_idx = 1
+    current = 0.0
+    align_cache: dict[str, tuple[Any, Any]] = {}
+    for slide_idx, wav_path in enumerate(files):
+        slide_duration = ffprobe_duration(wav_path)
+        slide_entries: list[tuple[float, float, str]] = []
+        try:
+            result = model.transcribe(str(wav_path), language="en")
+            language = result.get("language", "en")
+            segments = result.get("segments", [])
+            if language not in align_cache:
+                align_cache[language] = whisperx.load_align_model(language_code=language, device=device)
+            model_a, metadata = align_cache[language]
+            aligned = whisperx.align(segments, model_a, metadata, str(wav_path), device)
+            segments = aligned.get("segments", segments)
+        except Exception:
+            current += slide_duration
+            continue
+
+        slide_segments = []
+        for segment in segments:
+            text = re.sub(r"\s+", " ", str(segment.get("text") or "")).strip()
+            if not text:
+                continue
+            start = current + max(0.0, float(segment.get("start", 0.0)))
+            end = current + min(slide_duration, max(float(segment.get("end", 0.0)), float(segment.get("start", 0.0)) + 0.5))
+            end = min(current + slide_duration, max(start + 0.5, end))
+            cues = split_subtitle_cues(text, max_words=16, max_chars=104)
+            if not cues:
+                continue
+            cue_duration = max(0.5, (end - start) / len(cues))
+            for cue_idx, cue in enumerate(cues):
+                cue_start = start + cue_idx * cue_duration
+                cue_end = min(end, cue_start + cue_duration)
+                slide_entries.append((cue_start, cue_end, cue))
+            slide_segments.append({"text": text, "start": round(start - current, 3), "end": round(end - current, 3)})
+        for local_idx, (start, end, cue) in enumerate(slide_entries):
+            if local_idx + 1 < len(slide_entries):
+                end = max(end, slide_entries[local_idx + 1][0] - 0.02)
+            else:
+                end = max(end, current + slide_duration - 0.05)
+            entries.append((entry_idx, start, min(current + slide_duration, end), cue))
+            entry_idx += 1
+        transcript_slides.append({"slide_index": slide_idx, "audio_file": str(wav_path), "segments": slide_segments})
+        current += slide_duration
+
+    if not entries:
+        return False
+    write_srt_entries(entries, srt_path)
+    write_json(
+        transcript_path,
+        {
+            "source": "whisperx_asr",
+            "device": device,
+            "audio_dir": str(audio_dir),
+            "slides": transcript_slides,
+        },
+    )
     return True
 
 
@@ -1235,10 +1335,10 @@ def build_page_clips(result_dir: Path, slide_count: int) -> Path:
 
 def burn_subtitles(video_in: Path, srt_path: Path, video_out: Path) -> None:
     style = (
-        "FontName=Arial,FontSize=15,PrimaryColour=&H00FFFFFF,"
+        "FontName=Arial,FontSize=14,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BackColour=&H00000000,"
         "BorderStyle=1,Outline=1,Shadow=0,Alignment=2,"
-        "MarginL=90,MarginR=90,MarginV=16"
+        "MarginL=36,MarginR=36,MarginV=16"
     )
     sub_path = srt_path.resolve().as_posix().replace(":", "\\:").replace("'", "\\'")
     run(
@@ -1292,6 +1392,9 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     md_path, content_json = run_mineru(pdf_path, result_dir / "mineru", method=args.mineru_method)
     markdown = read_text(md_path)
     ocr_assets = build_ocr_assets(content_json, result_dir / "latex_proj", result_dir / "ocr_assets.json")
+    pacing_plan = build_adaptive_pacing_plan(args.desired_minutes, args.target_slides, len(ocr_assets))
+    write_json(result_dir / "agentic_pacing.json", pacing_plan)
+    metadata["agentic_pacing"] = pacing_plan
     metadata["steps"]["mineru_ocr"] = {
         "seconds": round(time.time() - t, 3),
         "markdown": str(md_path),
@@ -1301,8 +1404,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     emit_event("done", "mineru_ocr", "MinerU OCR completed.", metadata["steps"]["mineru_ocr"])
 
     t = time.time()
-    emit_event("start", "ollama_plan", "Ollama slide planning started.", {"model": args.model})
-    prompt = build_deck_prompt(markdown, args.goal_prompt, args.desired_minutes)
+    emit_event("start", "ollama_plan", "Ollama slide planning started.", {"model": args.model, "pacing": pacing_plan})
+    prompt = build_deck_prompt(markdown, args.goal_prompt, args.desired_minutes, pacing_plan)
     raw_plan = ollama_generate(
         prompt,
         model=args.model,
@@ -1310,7 +1413,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         temperature=args.temperature,
         top_p=args.top_p,
     )
-    plan = validate_plan(extract_json(raw_plan), args.desired_minutes)
+    plan = validate_plan(extract_json(raw_plan), args.desired_minutes, pacing_plan)
     write_json(result_dir / "plan.json", plan)
     (result_dir / "ollama_plan_raw.txt").write_text(raw_plan, encoding="utf-8")
     metadata["steps"]["ollama_plan"] = {"seconds": round(time.time() - t, 3), "slides": len(plan["slides"]) + 1}
@@ -1339,7 +1442,10 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     ref_audio_path, ref_text = resolve_reference_voice(args.ref_audio, args.ref_text, result_dir)
     if str(ref_audio_path) != args.ref_audio:
         emit_event("info", "tts", "Reference audio missing; using fallback reference voice.", {"ref_audio": str(ref_audio_path)})
-    tts_pacing = tts_pacing_for_minutes(args.desired_minutes)
+    tts_pacing = {
+        "voice_speed": float(pacing_plan["voice_speed"]),
+        "sentence_pause": float(pacing_plan["sentence_pause"]),
+    }
     synthesize_slide_audio(
         model_type="f5",
         script_path=str(script_path),
@@ -1356,6 +1462,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "audio_files": len(list(audio_dir.glob("*.wav"))),
         "speech_manifest": str(audio_dir / "speech_manifest.json"),
         "pacing": tts_pacing,
+        "agentic_pacing": str(result_dir / "agentic_pacing.json"),
         "audio_conditioning": audio_conditioning,
         "duration_fit": duration_fit,
     }
@@ -1377,8 +1484,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     t = time.time()
     emit_event("start", "video", "Video composition started.", {})
     srt_path = result_dir / "subtitles.srt"
-    if not build_srt_from_speech_manifest(audio_dir / "speech_manifest.json", audio_dir, srt_path):
-        build_srt_from_script(script_path, audio_dir, srt_path)
+    transcript_path = result_dir / "audio_transcript.json"
+    subtitle_source = "asr"
+    if pacing_plan.get("subtitle_source") != "asr" or not build_srt_from_audio_transcript(audio_dir, srt_path, transcript_path):
+        subtitle_source = "speech_manifest"
+        if not build_srt_from_speech_manifest(audio_dir / "speech_manifest.json", audio_dir, srt_path):
+            subtitle_source = "script"
+            build_srt_from_script(script_path, audio_dir, srt_path)
     merged = build_page_clips(result_dir, slide_count)
     with_cursor = result_dir / "2_merage.mp4"
     try:
@@ -1395,7 +1507,12 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     final_video = result_dir / "3_merage.mp4"
     burn_subtitles(with_cursor, srt_path, final_video)
     duration = ffprobe_duration(final_video)
-    metadata["steps"]["video"] = {"seconds": round(time.time() - t, 3), "final_video": str(final_video), "duration": round(duration, 3)}
+    metadata["steps"]["video"] = {
+        "seconds": round(time.time() - t, 3),
+        "final_video": str(final_video),
+        "duration": round(duration, 3),
+        "subtitle_source": subtitle_source,
+    }
     emit_event("done", "video", "Video composition completed.", metadata["steps"]["video"])
 
     metadata["total_seconds"] = round(time.time() - start, 3)
@@ -1407,6 +1524,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "slides_pdf": str(pdf_out),
         "script": str(script_path),
         "speech_manifest": str(audio_dir / "speech_manifest.json"),
+        "audio_transcript": str(transcript_path) if transcript_path.exists() else "",
+        "agentic_pacing": str(result_dir / "agentic_pacing.json"),
         "cursor": str(cursor_path),
         "subtitles": str(srt_path),
         "video": str(final_video),
@@ -1423,6 +1542,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--result_dir", required=True)
     parser.add_argument("--goal_prompt", default="Create a rigorous academic video presentation from this paper.")
     parser.add_argument("--desired_minutes", type=int, default=6)
+    parser.add_argument("--target_slides", type=int, default=None)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--ollama_url", default=DEFAULT_OLLAMA_URL)
     parser.add_argument("--temperature", type=float, default=0.2)

@@ -48,13 +48,56 @@ def sanitize_reference_text(ref_text):
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned or None
 
+
+def pronounce_decimal(value):
+    left, _, right = value.partition(".")
+    digit_words = {
+        "0": "zero",
+        "1": "one",
+        "2": "two",
+        "3": "three",
+        "4": "four",
+        "5": "five",
+        "6": "six",
+        "7": "seven",
+        "8": "eight",
+        "9": "nine",
+    }
+    if not right:
+        return left
+    return f"{left} point {' '.join(digit_words.get(char, char) for char in right)}"
+
+
+def normalize_tts_prompt(text):
+    text = re.sub(r"\bTrustCLIP\b", "Trust Clip", text)
+    text = re.sub(r"\bCLIP\b", "clip", text)
+    text = re.sub(r"\bFine[- ]?Tuning\b", "fine tuning", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bfine[- ]?tuned\b", "fine tuned", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bfine[- ]?tune\b", "fine tune", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bpre[- ]?trained\b", "pre trained", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bzero[- ]?shot\b", "zero shot", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bcross[- ]?modal\b", "cross modal", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bdual[- ]?modal\b", "dual modal", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bDelta\s+S\b", "delta ess", text)
+    text = re.sub(r"\bASR\b", "attack success rate", text)
+
+    def percent_repl(match):
+        return f"{pronounce_decimal(match.group(1))} percent"
+
+    text = re.sub(r"\b(\d+(?:\.\d+)?)\s*%", percent_repl, text)
+    text = text.replace(";", ".")
+    text = re.sub(r"\s*[-–—]\s*", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def inference_f5(text_prompt, save_path, ref_audio, ref_text, f5tts=None, speed=1.0):
     F5TTS = load_f5tts_class()
     synthesizer = f5tts or F5TTS()
     synthesizer.infer(
         ref_file=ref_audio,
         ref_text=sanitize_reference_text(ref_text),
-        gen_text=text_prompt,
+        gen_text=normalize_tts_prompt(text_prompt),
         speed=speed,
         file_wave=save_path,
         seed=None,
@@ -195,13 +238,12 @@ def synthesize_slide_audio(
             else: subtitle = subtitle + "\n\n\n" + prompt
         speech_result_path = path.join(speech_save_dir, "{}.wav".format(str(slide_idx)))
         if model_type == "f5":
-            chunks = split_narration_chunks(subtitle)
+            chunks = [normalize_tts_prompt(subtitle)]
             slide_manifest = {"slide_index": slide_idx, "chunks": [], "audio_file": speech_result_path}
-            if len(chunks) == 1 and sentence_pause <= 0:
-                inference_f5(chunks[0], speech_result_path, ref_audio, ref_text, f5tts=f5tts, speed=voice_speed)
-                slide_manifest["chunks"].append({"text": chunks[0], "start": 0.0, "end": wav_duration(speech_result_path)})
-                manifest["slides"].append(slide_manifest)
-                continue
+            inference_f5(chunks[0], speech_result_path, ref_audio, ref_text, f5tts=f5tts, speed=voice_speed)
+            slide_manifest["chunks"].append({"text": chunks[0], "start": 0.0, "end": wav_duration(speech_result_path)})
+            manifest["slides"].append(slide_manifest)
+            continue
 
             chunk_dir = Path(speech_save_dir) / "_chunks" / str(slide_idx)
             os.makedirs(chunk_dir, exist_ok=True)

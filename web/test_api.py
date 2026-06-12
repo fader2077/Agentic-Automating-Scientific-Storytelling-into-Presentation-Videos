@@ -51,6 +51,7 @@ from web.app import (
 from src.cursor_overlay import render_cursor_overlay_timeline
 from src.real_pipeline import (
     audit_asset_caption,
+    build_srt_from_audio_transcript,
     build_srt_from_speech_manifest,
     ensure_reference_audio,
     expand_speaker_text,
@@ -82,6 +83,9 @@ def write_fixture_result(result_dir: Path) -> dict:
         "slides_pdf": result_dir / "slides.pdf",
         "slides_tex": result_dir / "slides.tex",
         "script": result_dir / "subtitle_w_cursor.txt",
+        "speech_manifest": result_dir / "speech_manifest.json",
+        "audio_transcript": result_dir / "audio_transcript.json",
+        "agentic_pacing": result_dir / "agentic_pacing.json",
         "cursor": result_dir / "cursor.json",
         "subtitles": result_dir / "subtitles.srt",
         "video": result_dir / "3_merage.mp4",
@@ -90,6 +94,9 @@ def write_fixture_result(result_dir: Path) -> dict:
     files["slides_pdf"].write_bytes(b"%PDF-1.4\n% fixture\n")
     files["slides_tex"].write_text("\\documentclass{beamer}\n", encoding="utf-8")
     files["script"].write_text("Fixture narration. | center of slide\n", encoding="utf-8")
+    files["speech_manifest"].write_text(json.dumps({"slides": []}), encoding="utf-8")
+    files["audio_transcript"].write_text(json.dumps({"slides": []}), encoding="utf-8")
+    files["agentic_pacing"].write_text(json.dumps({"total_slides": 12, "content_slides": 11}), encoding="utf-8")
     files["cursor"].write_text(json.dumps({"points": []}), encoding="utf-8")
     files["subtitles"].write_text("1\n00:00:00,000 --> 00:00:01,000\nFixture narration.\n", encoding="utf-8")
     files["video"].write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom")
@@ -238,14 +245,15 @@ def main() -> None:
             assert restore_skills.status_code == 200
 
             assert target_content_slide_count(6) <= 14
-            assert target_speaker_words(6) <= 30
-            assert target_speaker_words(10) >= 40
+            assert target_content_slide_count(6, 12) == 10
+            assert 36 <= target_speaker_words(6, 12) <= 48
+            assert 24 <= target_speaker_words(10) <= 52
             long_speaker = expand_speaker_text("This slide introduces the method.", "Method", ["contrastive training", "backdoor robustness"], 10)
-            assert len(long_speaker.split()) >= 30
-            assert tts_pacing_for_minutes(6)["voice_speed"] <= 0.75
-            assert tts_pacing_for_minutes(6)["sentence_pause"] >= 0.3
-            assert tts_pacing_for_minutes(10)["voice_speed"] <= 0.9
-            assert tts_pacing_for_minutes(10)["sentence_pause"] >= 0.4
+            assert len(long_speaker.split()) >= 20
+            assert tts_pacing_for_minutes(6, 12)["voice_speed"] == 1.0
+            assert tts_pacing_for_minutes(6, 12)["sentence_pause"] == 0.0
+            assert tts_pacing_for_minutes(10)["voice_speed"] == 1.0
+            assert tts_pacing_for_minutes(10)["sentence_pause"] == 0.0
             assert len(split_narration_chunks("One sentence. " * 40, max_chars=80)) > 1
             subtitle_cues = split_subtitle_cues("This is a long subtitle sentence that should not cover the slide content. " * 4)
             assert len(subtitle_cues) > 2
@@ -280,6 +288,7 @@ def main() -> None:
             manifest_srt = fixture_dir / "manifest.srt"
             assert build_srt_from_speech_manifest(manifest_path, manifest_audio, manifest_srt) is True
             assert "First full subtitle sentence" in manifest_srt.read_text(encoding="utf-8")
+            assert build_srt_from_audio_transcript(manifest_audio, fixture_dir / "asr.srt", fixture_dir / "asr.json") is False
             contaminated_time_phrase = "24" + "-7"
             contaminated_topic_phrase = "sports and " + "politics"
             contaminated_show_phrase = "show " + "runs"
@@ -338,6 +347,7 @@ def main() -> None:
                 upload_id=upload_id,
                 goal_prompt="Create a rigorous academic video presentation.",
                 desired_minutes=4,
+                target_slide_count=12,
                 preferred_slide_style="clean beamer academic deck",
             )
             task = {
@@ -346,6 +356,7 @@ def main() -> None:
                 "created_at": 0.0,
                 "goal_prompt": payload.goal_prompt,
                 "desired_minutes": payload.desired_minutes,
+                "target_slide_count": payload.target_slide_count,
                 "preferred_slide_style": payload.preferred_slide_style,
                 "upload_id": upload_id,
                 "upload_name": upload_payload["file_name"],
@@ -383,7 +394,21 @@ def main() -> None:
             assert ocr_image.status_code == 200
             assert ocr_image.headers["content-type"].startswith("image/")
 
-            for artifact_name in ["ocr_markdown", "ocr_assets", "slides_pdf", "slides_tex", "script", "cursor", "subtitles", "video", "sat", "token"]:
+            for artifact_name in [
+                "ocr_markdown",
+                "ocr_assets",
+                "slides_pdf",
+                "slides_tex",
+                "script",
+                "speech_manifest",
+                "audio_transcript",
+                "agentic_pacing",
+                "cursor",
+                "subtitles",
+                "video",
+                "sat",
+                "token",
+            ]:
                 artifact = client.get(f"/api/tasks/{task_id}/artifacts/{artifact_name}")
                 assert artifact.status_code == 200, artifact_name
 

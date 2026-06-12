@@ -341,7 +341,8 @@ function renderTask(task) {
   const currentStep = (task.current_step ?? -1) + 1;
   const totalSteps = (task.steps || []).length;
   const queuePos = task.job?.queue_position ? `Queue ${task.job.queue_position}` : task.job?.state || "queued";
-  taskMeta.textContent = `${task.upload_name} | ${task.desired_minutes} min target | Stage ${Math.max(currentStep, 0)} / ${totalSteps} | Count ${counts.completed} / ${counts.total} | ${queuePos}`;
+  const slideTarget = task.target_slide_count ? ` | ${task.target_slide_count} slides` : "";
+  taskMeta.textContent = `${task.upload_name} | ${task.desired_minutes} min target${slideTarget} | Stage ${Math.max(currentStep, 0)} / ${totalSteps} | Count ${counts.completed} / ${counts.total} | ${queuePos}`;
   taskStatusPill.textContent = task.status;
   progressFill.style.width = `${Math.round((task.progress || 0) * 100)}%`;
   renderSteps(task.steps || []);
@@ -504,6 +505,7 @@ taskForm.addEventListener("submit", async (event) => {
         upload_id: uploadedPaper.id,
         goal_prompt: raw.goal_prompt,
         desired_minutes: Number(raw.desired_minutes),
+        target_slide_count: Number(raw.target_slide_count || 12),
         preferred_slide_style: raw.preferred_slide_style,
       }),
     });

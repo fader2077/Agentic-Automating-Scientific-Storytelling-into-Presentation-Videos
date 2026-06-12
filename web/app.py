@@ -153,6 +153,7 @@ class CreateTaskPayload(BaseModel):
     upload_id: str
     goal_prompt: str = Field(min_length=10)
     desired_minutes: int = Field(ge=1, le=20)
+    target_slide_count: int = Field(default=12, ge=5, le=30)
     preferred_slide_style: str = Field(min_length=2)
 
 
@@ -404,7 +405,9 @@ def resolve_agent_skills_md(agent_key: str) -> Path:
     raise HTTPException(status_code=404, detail="Agent not found")
 
 
-def estimate_content_slide_count(desired_minutes: int) -> int:
+def estimate_content_slide_count(desired_minutes: int, target_slide_count: int | None = None) -> int:
+    if target_slide_count:
+        return int(target_slide_count)
     minutes = max(1, int(desired_minutes))
     if minutes <= 3:
         return max(8, minutes * 3)
@@ -415,13 +418,13 @@ def estimate_content_slide_count(desired_minutes: int) -> int:
 
 def build_steps(payload: CreateTaskPayload, settings: dict[str, Any]) -> list[dict[str, Any]]:
     step_ticks = settings["step_ticks"]
-    target_slides = estimate_content_slide_count(payload.desired_minutes)
+    target_slides = estimate_content_slide_count(payload.desired_minutes, payload.target_slide_count)
     return [
         {
             "key": "ingest",
             "title": "Paper intake and OCR scan",
             "agent": "IngestionAgent",
-            "detail": f"Collect document structure, figures, and references from the uploaded source. Estimated slide target: {target_slides}.",
+            "detail": f"Collect document structure, figures, and references from the uploaded source. Final slide target: {target_slides}.",
             "status": "pending",
             "tick_total": step_ticks["ingest"],
             "tick_progress": 0,
@@ -474,7 +477,7 @@ def build_steps(payload: CreateTaskPayload, settings: dict[str, Any]) -> list[di
                     "Allocate sections and slide budgets.",
                     [
                         {"name": "score_sections", "input": "ocr spans", "output": "section weights"},
-                        {"name": "assign_slide_budget", "input": f"{payload.desired_minutes} minute target", "output": f"{target_slides} slide plan"},
+                        {"name": "assign_slide_budget", "input": f"{payload.desired_minutes} minute target + {target_slides} selected slides", "output": f"{target_slides} final pages"},
                     ],
                 ),
                 build_tool(
@@ -744,6 +747,7 @@ def task_summary(task: dict[str, Any]) -> dict[str, Any]:
         "finished_at": task.get("finished_at"),
         "goal_prompt": task["goal_prompt"],
         "desired_minutes": task["desired_minutes"],
+        "target_slide_count": task.get("target_slide_count"),
         "upload_name": task["upload_name"],
         "progress": task.get("progress", 0.0),
         "progress_counts": task_counts(task),
@@ -766,6 +770,7 @@ def queue_state() -> dict[str, Any]:
                 "queue_position": task["job"]["queue_position"],
                 "created_at": task["created_at"],
                 "desired_minutes": task["desired_minutes"],
+                "target_slide_count": task.get("target_slide_count"),
             }
             for task in waiting
         ],
@@ -855,6 +860,8 @@ def finalize_task_artifacts(task: dict[str, Any], metadata: dict[str, Any]) -> N
         "slides_tex": artifact_paths.get("slides_tex"),
         "script": artifact_paths.get("script"),
         "speech_manifest": artifact_paths.get("speech_manifest"),
+        "audio_transcript": artifact_paths.get("audio_transcript"),
+        "agentic_pacing": artifact_paths.get("agentic_pacing"),
         "cursor": artifact_paths.get("cursor"),
         "subtitles": artifact_paths.get("subtitles"),
         "video": artifact_paths.get("video"),
@@ -883,6 +890,8 @@ def build_pipeline_command(task: dict[str, Any]) -> list[str]:
         task["result_dir"],
         "--desired_minutes",
         str(task["desired_minutes"]),
+        "--target_slides",
+        str(task.get("target_slide_count") or 12),
         "--goal_prompt",
         f"{settings['system_prompt']}\n\nUser goal: {task['goal_prompt']}\nStyle: {task['preferred_slide_style']}",
         "--model",
@@ -1188,6 +1197,7 @@ def create_task(payload: CreateTaskPayload) -> dict[str, Any]:
         "created_at": now_ts(),
         "goal_prompt": payload.goal_prompt,
         "desired_minutes": payload.desired_minutes,
+        "target_slide_count": payload.target_slide_count,
         "preferred_slide_style": payload.preferred_slide_style,
         "upload_id": payload.upload_id,
         "upload_name": upload_info["file_name"],
