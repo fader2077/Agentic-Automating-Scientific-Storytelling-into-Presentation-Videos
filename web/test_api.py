@@ -48,7 +48,7 @@ from web.app import (
     write_task,
 )
 
-from src.cursor_render import render_video_with_cursor_from_json
+from src.cursor_overlay import render_video_with_cursor_from_json
 from src.real_pipeline import ensure_reference_audio
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="

@@ -60,9 +60,9 @@ The requested `Target length (minutes)` controls desired talk length and slide b
 - `web/static/`: browser UI for upload, settings, model/style selectors, history, replay, agents, tools, OCR assets, and output preview.
 - `web/test_api.py`: backend and API smoke tests.
 - `src/real_pipeline.py`: real OCR-to-video pipeline.
-- `src/cursor_gen.py`: deterministic cursor route generation.
-- `src/cursor_render.py`: cursor overlay rendering.
-- `src/speech_gen.py`: F5TTS per-slide speech generation.
+- `src/cursor_router.py`: deterministic cursor route generation.
+- `src/cursor_overlay.py`: cursor overlay rendering.
+- `src/speech_synth.py`: F5TTS per-slide speech generation.
 - `src/agents/`: agent catalog and per-agent `skills.md` files.
 - `src/tools/manifest.json`: runtime tool registry.
 
@@ -105,7 +105,7 @@ assets/demo/reference.wav
 
 If that file is missing, `src/real_pipeline.py` creates `reference_fallback.wav` inside the job result directory so F5TTS does not fail with `FileNotFoundError`. Voice quality is better when a real reference wav and matching transcript are provided.
 
-Cursor overlay does not require a repository image asset. `src/cursor_render.py` draws the cursor directly with an ffmpeg `drawbox` filter from `cursor.json`.
+Cursor overlay does not require a repository image asset. `src/cursor_overlay.py` draws the cursor directly with an ffmpeg `drawbox` filter from `cursor.json`.
 
 After F5TTS synthesis, the pipeline measures total narration duration and applies ffmpeg `atempo` normalization when needed so the final MP4 stays close to the requested target minutes.
 
@@ -142,7 +142,7 @@ http://127.0.0.1:8008
 ## Test
 
 ```powershell
-.\.venv\Scripts\python.exe -m py_compile src\real_pipeline.py src\cursor_gen.py src\cursor_render.py src\speech_gen.py web\app.py web\test_api.py
+.\.venv\Scripts\python.exe -m py_compile src\real_pipeline.py src\cursor_router.py src\cursor_overlay.py src\speech_synth.py web\app.py web\test_api.py
 .\.venv\Scripts\python.exe web\test_api.py
 ```
 

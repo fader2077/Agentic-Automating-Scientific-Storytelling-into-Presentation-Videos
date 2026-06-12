@@ -25,9 +25,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from cursor_gen import cursor_gen_per_sentence
-from cursor_render import render_video_with_cursor_from_json
-from speech_gen import tts_per_slide
+from cursor_router import cursor_gen_per_sentence
+from cursor_overlay import render_video_with_cursor_from_json
+from speech_synth import tts_per_slide
 
 
 DEFAULT_MODEL = "qwen3.6:27b"
