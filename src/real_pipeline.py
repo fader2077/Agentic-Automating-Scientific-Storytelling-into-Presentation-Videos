@@ -131,7 +131,7 @@ def emit_event(kind: str, step: str, message: str, data: dict[str, Any] | None =
         "data": data or {},
         "timestamp": time.time(),
     }
-    print("P2V_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
+    print("PIPELINE_EVENT " + json.dumps(payload, ensure_ascii=False), flush=True)
 
 
 def ensure_ollama_model(model: str, base_url: str) -> None:
@@ -293,6 +293,34 @@ def normalize_latex_text(value: Any) -> str:
     return text.strip()
 
 
+def audit_asset_caption(caption: str, kind: str, page: int) -> str:
+    caption = normalize_latex_text(caption)
+    if not caption:
+        return f"OCR {kind} from page {page}"
+
+    cleaned = re.sub(r"[^A-Za-z0-9\s.,;:()/%+\-=]", "", caption)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return f"OCR {kind} from page {page}"
+
+    original_len = max(len(caption), 1)
+    retained_ratio = len(cleaned) / original_len
+    punct_ratio = len(re.findall(r"[^A-Za-z0-9\s]", cleaned)) / max(len(cleaned), 1)
+    words = cleaned.split()
+
+    if retained_ratio < 0.68 or punct_ratio > 0.22:
+        return f"OCR {kind} from page {page}"
+
+    if len(words) > 26:
+        cleaned = " ".join(words[:26]).rstrip(".,;:") + "."
+    elif len(cleaned) > 170:
+        cleaned = cleaned[:170].rsplit(" ", 1)[0].rstrip(".,;:") + "."
+
+    if len(cleaned) < 8:
+        return f"OCR {kind} from page {page}"
+    return cleaned
+
+
 def build_ocr_assets(content_json: Path, latex_dir: Path, manifest_path: Path) -> list[dict[str, Any]]:
     if not content_json.exists() or content_json.suffix.lower() != ".json":
         write_json(manifest_path, {"assets": [], "counts": {}})
@@ -311,7 +339,7 @@ def build_ocr_assets(content_json: Path, latex_dir: Path, manifest_path: Path) -
         if kind not in supported:
             continue
         counts[kind] = counts.get(kind, 0) + 1
-        caption = normalize_latex_text(
+        raw_caption = (
             item.get("image_caption")
             or item.get("table_caption")
             or item.get("chart_caption")
@@ -321,6 +349,7 @@ def build_ocr_assets(content_json: Path, latex_dir: Path, manifest_path: Path) -
             or item.get("code_body")
             or item.get("content")
         )
+        caption = audit_asset_caption(raw_caption, kind, int(item.get("page_idx", 0)) + 1)
         image_path = item.get("img_path")
         copied_path = ""
         if image_path:

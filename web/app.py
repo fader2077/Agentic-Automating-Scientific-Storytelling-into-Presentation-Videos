@@ -42,6 +42,7 @@ PIPELINE_STEP_MAP = {
     "video": "compose",
 }
 PIPELINE_PYTHON_CANDIDATES = [
+    ROOT.parent / ".runtime_env" / "Scripts" / "python.exe",
     ROOT.parent / ".venv" / "Scripts" / "python.exe",
 ]
 PIPELINE_SCRIPT = ROOT.parent / "src" / "real_pipeline.py"
@@ -315,7 +316,7 @@ def gpu_status() -> dict[str, Any]:
 
 
 def resolve_pipeline_python() -> Path:
-    env_python = os.environ.get("P2V_PIPELINE_PYTHON")
+    env_python = os.environ.get("PIPELINE_RUNTIME_PYTHON")
     candidates = [Path(env_python)] if env_python else []
     candidates.extend(PIPELINE_PYTHON_CANDIDATES)
     candidates.append(Path(sys.executable))
@@ -949,8 +950,8 @@ def process_task(task_id: str) -> None:
             log_file.write(line)
             log_file.flush()
             stripped = line.strip()
-            if stripped.startswith("P2V_EVENT "):
-                payload = json.loads(stripped.removeprefix("P2V_EVENT "))
+            if stripped.startswith("PIPELINE_EVENT "):
+                payload = json.loads(stripped.removeprefix("PIPELINE_EVENT "))
                 task = read_task(task_id)
                 apply_pipeline_event(task, payload)
                 task["job"]["last_heartbeat"] = now_ts()
@@ -1011,7 +1012,7 @@ def worker_loop() -> None:
 
 
 def ensure_worker() -> None:
-    if os.environ.get("P2V_WEB_DISABLE_WORKER") == "1":
+    if os.environ.get("WEB_DISABLE_WORKER_THREAD") == "1":
         return
     global WORKER_THREAD
     with WORKER_LOCK:
@@ -1041,7 +1042,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.on_event("startup")
 def startup_worker() -> None:
-    if os.environ.get("P2V_WEB_DISABLE_WORKER") == "1":
+    if os.environ.get("WEB_DISABLE_WORKER_THREAD") == "1":
         return
     ensure_worker()
     refresh_queue_positions()

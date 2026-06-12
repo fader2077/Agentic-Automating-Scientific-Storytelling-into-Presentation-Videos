@@ -8,7 +8,7 @@ import uuid
 import types
 from pathlib import Path
 
-os.environ["P2V_WEB_DISABLE_WORKER"] = "1"
+os.environ["WEB_DISABLE_WORKER_THREAD"] = "1"
 
 from fastapi.testclient import TestClient
 

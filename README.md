@@ -91,9 +91,10 @@ Install these on the local machine:
 
 The web worker chooses the pipeline Python in this order:
 
-1. `P2V_PIPELINE_PYTHON` environment variable, if set.
-2. Repository `.venv\Scripts\python.exe`, if present.
-3. The Python executable that started FastAPI.
+1. `PIPELINE_RUNTIME_PYTHON` environment variable, if set.
+2. Repository `.runtime_env\Scripts\python.exe`, if present.
+3. Repository `.venv\Scripts\python.exe`, if present.
+4. The Python executable that started FastAPI.
 
 For real TTS runs, use a Python environment with `whisperx` and `f5_tts` installed. `whisperx` is only needed when `--ref_text` is missing; F5TTS is needed for speech synthesis.
 
@@ -112,7 +113,7 @@ After F5TTS synthesis, the pipeline measures total narration duration and applie
 ## Run Web UI
 
 ```powershell
-$env:P2V_PIPELINE_PYTHON = ".\.venv\Scripts\python.exe"
+$env:PIPELINE_RUNTIME_PYTHON = ".\.runtime_env\Scripts\python.exe"
 .\.venv\Scripts\python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8008
 ```
 
