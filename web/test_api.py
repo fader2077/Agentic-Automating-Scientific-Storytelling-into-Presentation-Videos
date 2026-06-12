@@ -49,7 +49,7 @@ from web.app import (
 )
 
 from src.cursor_overlay import render_cursor_overlay_timeline
-from src.real_pipeline import ensure_reference_audio
+from src.real_pipeline import audit_asset_caption, ensure_reference_audio, expand_speaker_text, target_speaker_words
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
 )
@@ -222,6 +222,11 @@ def main() -> None:
             assert "api edit roundtrip" in client.get("/api/agents/SpeechAgent/skills.md").text
             restore_skills = client.put("/api/agents/SpeechAgent/skills.md", json={"content": original_skills})
             assert restore_skills.status_code == 200
+
+            assert target_speaker_words(10) >= 60
+            long_speaker = expand_speaker_text("This slide introduces the method.", "Method", ["contrastive training", "backdoor robustness"], 10)
+            assert len(long_speaker.split()) >= 55
+            assert audit_asset_caption("%%%% $$$$ @@@@ \u03b1\u03b2\u03b3", "chart", 7) == "OCR chart from page 7"
 
             fallback_ref = ensure_reference_audio(str(fixture_dir / "missing_reference.wav"), fixture_dir)
             assert fallback_ref.exists()

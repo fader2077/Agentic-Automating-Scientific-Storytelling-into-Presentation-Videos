@@ -442,9 +442,9 @@ def target_content_slide_count(desired_minutes: int) -> int:
 
 def target_speaker_words(desired_minutes: int) -> int:
     slide_count = target_content_slide_count(desired_minutes)
-    target_total_words = max(160, int(desired_minutes) * 125)
+    target_total_words = max(180, int(desired_minutes) * 145)
     rendered_slide_count = slide_count + 1
-    return max(26, min(48, target_total_words // max(rendered_slide_count, 1)))
+    return max(28, min(86, target_total_words // max(rendered_slide_count, 1)))
 
 
 def word_count(text: str) -> int:
@@ -485,10 +485,18 @@ def expand_speaker_text(speaker: str, slide_title: str, bullets: list[str], desi
     if word_count(speaker) >= target_words:
         return trim_speaker_text(speaker, target_words + 5)
 
-    additions = [
-        "The visual evidence anchors this point in the extracted paper content.",
-        "This also prepares the evaluation and limitations discussed later.",
-    ]
+    additions = []
+    clean_bullets = [re.sub(r"\s+", " ", bullet).strip(" .") for bullet in bullets if str(bullet).strip()]
+    for index, bullet in enumerate(clean_bullets[:4], start=1):
+        lead = "First" if index == 1 else "Next" if index == 2 else "Then" if index == 3 else "Finally"
+        additions.append(f"{lead}, the slide emphasizes {bullet.lower()} and connects it to the paper's main argument.")
+    additions.extend(
+        [
+            "The visual evidence should be read as support for this explanation rather than as a separate result.",
+            "This point also prepares the next part of the talk, where the method and experiments are tied together.",
+            "For a longer presentation, the important takeaway is how this evidence changes the interpretation of the paper.",
+        ]
+    )
     for addition in additions:
         if word_count(speaker) >= target_words:
             break
@@ -772,6 +780,53 @@ def atempo_filter(speed: float) -> str:
     return ",".join(f"atempo={factor:.6g}" for factor in factors)
 
 
+def append_silence_to_wav(wav_path: Path, pad_seconds: float) -> None:
+    if pad_seconds <= 0.05:
+        return
+    temp_path = wav_path.with_suffix(".padded.wav")
+    run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(wav_path),
+            "-af",
+            f"apad=pad_dur={pad_seconds:.3f}",
+            str(temp_path),
+        ],
+        timeout=180,
+    )
+    os.replace(temp_path, wav_path)
+
+
+def condition_audio_files(audio_dir: Path) -> dict[str, Any]:
+    files = numeric_wav_files(audio_dir)
+    if not files:
+        return {"changed": False, "files": 0}
+
+    audio_filter = "alimiter=limit=0.82:attack=5:release=80:level=false,volume=0.95"
+    for wav_path in files:
+        temp_path = wav_path.with_suffix(".conditioned.wav")
+        run(
+            [
+                "ffmpeg",
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(wav_path),
+                "-filter:a",
+                audio_filter,
+                str(temp_path),
+            ],
+            timeout=180,
+        )
+        os.replace(temp_path, wav_path)
+    return {"changed": True, "files": len(files), "filter": audio_filter}
+
+
 def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dict[str, Any]:
     files = numeric_wav_files(audio_dir)
     durations = [ffprobe_duration(path) for path in files]
@@ -784,9 +839,37 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
     if 0.95 <= speed <= 1.08:
         return {
             "changed": False,
+            "mode": "natural",
             "original_total": round(original_total, 3),
             "target_total": round(target_total, 3),
             "speed": round(speed, 3),
+        }
+
+    if speed < 0.85:
+        missing = target_total - original_total
+        total_weight = sum(max(duration, 1.0) for duration in durations)
+        for wav_path, duration in zip(files, durations):
+            share = missing * (max(duration, 1.0) / total_weight)
+            append_silence_to_wav(wav_path, share)
+        padded_total = sum(ffprobe_duration(path) for path in files)
+        return {
+            "changed": True,
+            "mode": "silence_padding",
+            "original_total": round(original_total, 3),
+            "target_total": round(target_total, 3),
+            "padded_total": round(padded_total, 3),
+            "speed": round(speed, 3),
+            "reason": "Avoided aggressive TTS slow-down to preserve voice quality.",
+        }
+
+    if speed > 1.25:
+        return {
+            "changed": False,
+            "mode": "no_aggressive_speedup",
+            "original_total": round(original_total, 3),
+            "target_total": round(target_total, 3),
+            "speed": round(speed, 3),
+            "reason": "Skipped aggressive speed-up to preserve voice quality.",
         }
 
     audio_filter = atempo_filter(speed)
@@ -810,6 +893,7 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
     normalized_total = sum(ffprobe_duration(path) for path in files)
     return {
         "changed": True,
+        "mode": "safe_atempo",
         "original_total": round(original_total, 3),
         "target_total": round(target_total, 3),
         "normalized_total": round(normalized_total, 3),
@@ -1054,10 +1138,12 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         ref_audio=str(ref_audio_path),
         ref_text=ref_text,
     )
+    audio_conditioning = condition_audio_files(audio_dir)
     duration_fit = normalize_audio_total_duration(audio_dir, args.desired_minutes)
     metadata["steps"]["tts"] = {
         "seconds": round(time.time() - t, 3),
         "audio_files": len(list(audio_dir.glob("*.wav"))),
+        "audio_conditioning": audio_conditioning,
         "duration_fit": duration_fit,
     }
     emit_event("done", "tts", "F5TTS synthesis completed.", metadata["steps"]["tts"])
