@@ -404,9 +404,18 @@ def resolve_agent_skills_md(agent_key: str) -> Path:
     raise HTTPException(status_code=404, detail="Agent not found")
 
 
+def estimate_content_slide_count(desired_minutes: int) -> int:
+    minutes = max(1, int(desired_minutes))
+    if minutes <= 3:
+        return max(8, minutes * 3)
+    if minutes <= 6:
+        return max(10, min(14, minutes * 2 + 2))
+    return max(14, min(18, minutes * 2))
+
+
 def build_steps(payload: CreateTaskPayload, settings: dict[str, Any]) -> list[dict[str, Any]]:
     step_ticks = settings["step_ticks"]
-    target_slides = max(8, min(22, payload.desired_minutes * 4))
+    target_slides = estimate_content_slide_count(payload.desired_minutes)
     return [
         {
             "key": "ingest",

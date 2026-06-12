@@ -437,14 +437,19 @@ OCR text:
 
 
 def target_content_slide_count(desired_minutes: int) -> int:
-    return max(8, min(22, int(desired_minutes) * 4))
+    minutes = max(1, int(desired_minutes))
+    if minutes <= 3:
+        return max(8, minutes * 3)
+    if minutes <= 6:
+        return max(10, min(14, minutes * 2 + 2))
+    return max(14, min(18, minutes * 2))
 
 
 def target_speaker_words(desired_minutes: int) -> int:
     slide_count = target_content_slide_count(desired_minutes)
-    target_total_words = max(240, int(desired_minutes) * 215)
+    target_total_words = max(220, int(desired_minutes) * 135)
     rendered_slide_count = slide_count + 1
-    return max(34, min(125, target_total_words // max(rendered_slide_count, 1)))
+    return max(32, min(76, target_total_words // max(rendered_slide_count, 1)))
 
 
 def word_count(text: str) -> int:
@@ -509,9 +514,9 @@ def expand_speaker_text(speaker: str, slide_title: str, bullets: list[str], desi
 def tts_pacing_for_minutes(desired_minutes: int) -> dict[str, float]:
     minutes = max(1, int(desired_minutes))
     if minutes >= 8:
-        return {"voice_speed": 0.86, "sentence_pause": 0.55}
+        return {"voice_speed": 0.78, "sentence_pause": 0.7}
     if minutes >= 5:
-        return {"voice_speed": 0.86, "sentence_pause": 0.45}
+        return {"voice_speed": 0.74, "sentence_pause": 0.8}
     return {"voice_speed": 1.0, "sentence_pause": 0.0}
 
 
@@ -817,7 +822,7 @@ def condition_audio_files(audio_dir: Path) -> dict[str, Any]:
     if not files:
         return {"changed": False, "files": 0}
 
-    audio_filter = "alimiter=limit=0.82:attack=5:release=80:level=false,volume=0.95"
+    audio_filter = "alimiter=limit=0.75:attack=5:release=100:level=false,volume=0.88"
     for wav_path in files:
         temp_path = wav_path.with_suffix(".conditioned.wav")
         run(
@@ -842,9 +847,16 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
     files = numeric_wav_files(audio_dir)
     durations = [ffprobe_duration(path) for path in files]
     original_total = sum(durations)
-    target_total = max(30.0, float(desired_minutes) * 60.0)
+    requested_total = max(30.0, float(desired_minutes) * 60.0)
+    allowed_shortfall = 60.0 if desired_minutes >= 3 else 0.0
+    target_total = max(30.0, requested_total - allowed_shortfall)
     if not files or original_total <= 0:
-        return {"changed": False, "original_total": round(original_total, 3), "target_total": round(target_total, 3)}
+        return {
+            "changed": False,
+            "original_total": round(original_total, 3),
+            "target_total": round(target_total, 3),
+            "requested_total": round(requested_total, 3),
+        }
 
     speed = original_total / target_total
     if 0.98 <= speed <= 1.08:
@@ -853,6 +865,7 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
             "mode": "natural",
             "original_total": round(original_total, 3),
             "target_total": round(target_total, 3),
+            "requested_total": round(requested_total, 3),
             "speed": round(speed, 3),
         }
 
@@ -868,6 +881,7 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
             "mode": "silence_padding",
             "original_total": round(original_total, 3),
             "target_total": round(target_total, 3),
+            "requested_total": round(requested_total, 3),
             "padded_total": round(padded_total, 3),
             "speed": round(speed, 3),
             "reason": "Used distributed pauses instead of slowing synthesized speech.",
@@ -879,6 +893,7 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
             "mode": "no_aggressive_speedup",
             "original_total": round(original_total, 3),
             "target_total": round(target_total, 3),
+            "requested_total": round(requested_total, 3),
             "speed": round(speed, 3),
             "reason": "Skipped aggressive speed-up to preserve voice quality.",
         }
@@ -907,13 +922,14 @@ def normalize_audio_total_duration(audio_dir: Path, desired_minutes: int) -> dic
         "mode": "safe_atempo",
         "original_total": round(original_total, 3),
         "target_total": round(target_total, 3),
+        "requested_total": round(requested_total, 3),
         "normalized_total": round(normalized_total, 3),
         "speed": round(speed, 3),
         "filter": audio_filter,
     }
 
 
-def split_subtitle_cues(text: str, max_words: int = 11, max_chars: int = 74) -> list[str]:
+def split_subtitle_cues(text: str, max_words: int = 7, max_chars: int = 52) -> list[str]:
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
         return []
@@ -932,6 +948,18 @@ def split_subtitle_cues(text: str, max_words: int = 11, max_chars: int = 74) -> 
         if current:
             cues.append(format_subtitle_cue(" ".join(current), max_chars=max_chars))
     return [cue for cue in cues if cue]
+
+
+def compact_slide_caption(text: str, max_words: int = 5, max_chars: int = 34) -> str:
+    cues = split_subtitle_cues(text, max_words=max_words, max_chars=max_chars)
+    if not cues:
+        return ""
+    caption = cues[0].replace("\n", " ")
+    words = caption.split()[:max_words]
+    caption = " ".join(words).rstrip(".,;:")
+    if len(caption) > max_chars:
+        caption = caption[:max_chars].rsplit(" ", 1)[0].rstrip(".,;:")
+    return caption
 
 
 def format_subtitle_cue(text: str, max_chars: int = 74) -> str:
@@ -971,17 +999,12 @@ def build_srt_from_script(script_path: Path, audio_dir: Path, srt_path: Path) ->
             if "|" in line:
                 text_parts.append(line.split("|", 1)[0].strip())
         text = " ".join(text_parts).strip()
-        cues = split_subtitle_cues(text)
-        if cues:
-            weights = [max(1, word_count(cue)) for cue in cues]
-            total_weight = sum(weights)
-            elapsed = 0.0
-            for cue, weight in zip(cues, weights):
-                start = current + elapsed
-                elapsed += duration * (weight / total_weight)
-                end = current + min(duration, elapsed)
-                entries.append((entry_idx, start, end, cue))
-                entry_idx += 1
+        caption = compact_slide_caption(text)
+        if caption:
+            start = current + min(0.25, duration * 0.04)
+            end = min(slide_end, start + min(5.0, max(2.2, duration * 0.18)))
+            entries.append((entry_idx, start, end, caption))
+            entry_idx += 1
         current = slide_end
 
     def fmt(seconds: float) -> str:
@@ -1091,10 +1114,10 @@ def build_page_clips(result_dir: Path, slide_count: int) -> Path:
 
 def burn_subtitles(video_in: Path, srt_path: Path, video_out: Path) -> None:
     style = (
-        "FontName=Arial,FontSize=11,PrimaryColour=&H00FFFFFF,"
+        "FontName=Arial,FontSize=7,PrimaryColour=&H00FFFFFF,"
         "OutlineColour=&H00000000,BackColour=&H00000000,"
-        "BorderStyle=1,Outline=1,Shadow=0,Alignment=2,"
-        "MarginL=90,MarginR=90,MarginV=12"
+        "BorderStyle=1,Outline=0.6,Shadow=0,Alignment=2,"
+        "MarginL=130,MarginR=130,MarginV=4"
     )
     sub_path = srt_path.resolve().as_posix().replace(":", "\\:").replace("'", "\\'")
     run(
