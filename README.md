@@ -54,6 +54,12 @@ The runtime tool registry lives in `src/tools/manifest.json`. Current tools incl
 
 The requested `Target length (minutes)` controls desired talk length and slide budget. The planner currently maps this to a bounded academic deck size, then the narration stage expands or trims speaker text. Actual final video length may still differ because F5TTS speech speed and slide count determine the final MP4 duration.
 
+## OCR Visual Grounding
+
+`src/real_pipeline.py` builds an OCR asset manifest from MinerU content JSON, then scores figures, tables, charts, and formulas against each slide before Beamer rendering. The scorer prefers result tables/charts for experiment slides, method/framework figures for system slides, and only allows formulas on formula-oriented slides. Generic OCR fragments, equations without slide matches, logos, watermarks, headers, footers, notation lists, missing images, and low-information captions are filtered before selection.
+
+Visual labels are inferred from captions as well as MinerU asset type, so a table misclassified as a chart is still rendered as `OCR Table`. If the model under-produces slides, the normalizer adds natural discussion/takeaway slides instead of placeholder evidence text. Script expansion also rewrites terse bullet fragments into more natural narration clauses before TTS.
+
 ## Runtime Layout
 
 - `web/app.py`: FastAPI control room, queue, task state, artifacts, settings, agent/skill APIs, and web routes.

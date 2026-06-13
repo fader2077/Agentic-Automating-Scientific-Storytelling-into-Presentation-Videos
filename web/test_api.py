@@ -59,6 +59,10 @@ from src.real_pipeline import (
     sanitize_reference_text,
     compact_slide_caption,
     compact_slide_captions,
+    is_usable_ocr_asset,
+    assign_visual_assets,
+    select_visual_asset,
+    visual_asset_display_kind,
     split_subtitle_cues,
     target_content_slide_count,
     target_speaker_words,
@@ -251,8 +255,42 @@ def main() -> None:
             long_speaker = expand_speaker_text("This slide introduces the method.", "Method", ["contrastive training", "backdoor robustness"], 10)
             assert len(long_speaker.split()) >= 20
             natural_speaker = expand_speaker_text("This slide introduces the method.", "Method", ["contrastive training", "backdoor robustness"], 6, 42)
-            assert "Key evidence" not in natural_speaker
-            assert "Evidence to inspect" not in natural_speaker
+            bad_key = "Key " + "evidence"
+            bad_evidence = "Evidence " + "to inspect"
+            bad_audience = "The slide " + "mainly asks"
+            bad_main = "The main " + "point is that"
+            bad_placeholder = "paper evidence " + "to inspect"
+            assert bad_key not in natural_speaker
+            assert bad_evidence not in natural_speaker
+            assert bad_audience not in natural_speaker
+            assert bad_main not in natural_speaker
+            assert bad_placeholder not in natural_speaker.lower()
+            method_speaker = expand_speaker_text("", "Stage 2: Delta S Filter", ["Analyzes similarity shifts in embeddings", "Detects anomalous alignments"], 6, 42)
+            assert "through analyzes" not in method_speaker.lower()
+            assert "focuses on analyzing similarity shifts" in method_speaker.lower()
+            intro_speaker = expand_speaker_text("", "Introduction", ["CLIP aligns images and text", "uncurated noisy internet data"], 6, 42)
+            assert "Start by noting that" in intro_speaker
+            assert bad_main not in intro_speaker
+            intro_slide = {"title": "Introduction: The Rise of Multimodal Models", "bullets": ["CLIP aligns images and text", "Trained on web-scale pairs"]}
+            bad_equation = {"id": "equation_01", "kind": "equation", "caption": "sim_before", "body": "sim_before", "image": "eq.jpg"}
+            bad_logo = {"id": "image_01", "kind": "image", "caption": "OCR image from page 11 university logo", "body": "", "image": "logo.jpg"}
+            bad_notation = {"id": "table_00", "kind": "table", "caption": "Table 1: Notation table for symbols used in Algorithms.", "body": "Notation table", "image": "notation.jpg"}
+            bad_notation_list = {"id": "table_02", "kind": "table", "caption": "Table 9. List of " + "Notations and Parameters Used in This Thesis", "body": "", "image": "notation2.jpg"}
+            good_table = {"id": "table_01", "kind": "table", "caption": "Table 1 CLIP image text retrieval benchmark", "body": "CLIP image text retrieval benchmark", "image": "table.jpg"}
+            framework_image = {"id": "image_02", "kind": "image", "caption": "Figure 2 three-stage defense framework for TrustCLIP", "body": "framework defense method", "image": "framework.jpg"}
+            result_slide = {"title": "Experimental Results", "bullets": ["CLIP image text retrieval benchmark", "Attack success rate improves"]}
+            result_method_slide = {"title": "Results: Effectiveness", "bullets": ["Outperforms existing defense methods", "Reduces ASR to 1.4 percent"]}
+            assert not is_usable_ocr_asset(bad_equation, "Introduction to multimodal CLIP")
+            assert not is_usable_ocr_asset(bad_logo, "attack trigger defense")
+            assert not is_usable_ocr_asset(bad_notation, "Introduction to multimodal CLIP")
+            assert not is_usable_ocr_asset(bad_notation_list, "Graph construction")
+            assert select_visual_asset(intro_slide, [bad_equation, bad_logo, bad_notation], set()) is None
+            assert select_visual_asset(intro_slide, [bad_equation, bad_logo, good_table], set()) is None
+            assert select_visual_asset(result_slide, [bad_equation, bad_logo, good_table], set()) == good_table
+            assert select_visual_asset(result_method_slide, [framework_image, good_table], set()) == good_table
+            assert assign_visual_assets([intro_slide, result_slide], [framework_image, good_table])[0] is None
+            mislabeled_table = {"id": "chart_01", "kind": "chart", "caption": "Table 5: Ablation study on each stage.", "body": "", "image": "chart.jpg"}
+            assert visual_asset_display_kind(mislabeled_table) == "Table"
             assert tts_pacing_for_minutes(6, 12)["voice_speed"] == 1.0
             assert tts_pacing_for_minutes(6, 12)["sentence_pause"] == 0.0
             assert tts_pacing_for_minutes(10)["voice_speed"] == 1.0

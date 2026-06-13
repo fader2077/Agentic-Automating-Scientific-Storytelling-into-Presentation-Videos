@@ -371,24 +371,209 @@ def audit_asset_caption(caption: str, kind: str, page: int) -> str:
     return cleaned
 
 
+def _asset_tokens(text: str) -> set[str]:
+    stop = {
+        "this", "that", "with", "from", "into", "paper", "slide", "video",
+        "figure", "table", "image", "result", "method", "using", "used",
+        "shown", "shows", "present", "presentation", "model", "models",
+        "page", "ocr", "visual", "content", "data",
+    }
+    return {
+        token
+        for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{3,}", (text or "").lower())
+        if token not in stop and not token.isdigit()
+    }
+
+
+def _slide_allows_equation(slide_text: str) -> bool:
+    low = (slide_text or "").lower()
+    return any(token in low for token in [
+        "equation", "formula", "objective", "loss", "score",
+        "metric definition", "optimization", "probability", "gradient",
+    ])
+
+
+def _generic_or_bad_caption(caption: str) -> bool:
+    low = (caption or "").lower()
+    bad_caption_tokens = [
+        "ocr image from page",
+        "ocr equation",
+        "caption card generated",
+        "visual asset unavailable",
+        "figure asset unavailable",
+        "selected visual aligned",
+        "ocr image.",
+        "ocr table.",
+        "ocr chart.",
+        "ocr figure.",
+        "ocr chart from page",
+        "notation table",
+        "list of notation",
+        "list of notations",
+    ]
+    noise_tokens = [
+        "logo", "watermark", "seal", "university", "page header", "page footer",
+        "copyright", "license", "arxiv", "conference", "proceedings",
+    ]
+    return any(token in low for token in bad_caption_tokens + noise_tokens)
+
+
+def _looks_like_noise_asset(asset: dict[str, Any]) -> bool:
+    caption = str(asset.get("caption") or "")
+    body = str(asset.get("body") or "")
+    kind = str(asset.get("kind") or "").lower()
+    if _generic_or_bad_caption(caption) or _generic_or_bad_caption(body):
+        return True
+    if kind in {"equation", "interline_equation", "formula"}:
+        latex = body or caption
+        if len(latex) < 4 or len(latex) > 360:
+            return True
+    return False
+
+
+def is_usable_ocr_asset(asset: dict[str, Any], slide_text: str = "") -> bool:
+    kind = str(asset.get("kind") or "").lower()
+    image_path = str(asset.get("image") or "")
+    caption = str(asset.get("caption") or "")
+    body = str(asset.get("body") or "")
+
+    if not image_path:
+        return False
+    if _looks_like_noise_asset(asset):
+        return False
+    if kind in {"equation", "interline_equation", "formula"} and not _slide_allows_equation(slide_text):
+        return False
+    if len(_asset_tokens(caption + " " + body)) < 2 and kind not in {"table", "chart"}:
+        return False
+    return True
+
+
+def _contains_terms(text: str, terms: list[str]) -> bool:
+    low = (text or "").lower()
+    for term in terms:
+        term = term.lower()
+        if " " in term:
+            if term in low:
+                return True
+        elif re.search(rf"\b{re.escape(term)}\b", low):
+            return True
+    return False
+
+
+def score_visual_asset(slide: dict[str, Any], asset: dict[str, Any]) -> float:
+    slide_text = f"{slide.get('title', '')} {' '.join(slide.get('bullets', []))}".lower()
+    caption = str(asset.get("caption") or "").lower()
+    body = str(asset.get("body") or "").lower()
+    asset_text = f"{caption} {body}"
+    kind = str(asset.get("kind") or "").lower()
+
+    if not is_usable_ocr_asset(asset, slide_text):
+        return -100.0
+
+    score = 0.0
+    overlap = _asset_tokens(slide_text) & _asset_tokens(f"{caption} {body}")
+    score += min(12.0, len(overlap) * 1.8)
+
+    result_terms = ["benchmark", "comparison", "result", "results", "effectiveness", "experiment", "setup", "ablation", "asr", "ba", "accuracy"]
+    method_terms = ["method", "stage", "framework", "pipeline", "partition", "filter", "unlearning", "architecture", "system"]
+    attack_terms = ["attack", "backdoor", "poison", "trigger"]
+
+    is_result_context = _contains_terms(slide_text, result_terms)
+    is_method_context = _contains_terms(slide_text, method_terms)
+    is_attack_context = _contains_terms(slide_text, attack_terms)
+
+    if is_result_context:
+        if kind in {"table", "chart"}:
+            score += 10
+        elif kind == "image":
+            score -= 12
+
+    if is_method_context and not is_result_context:
+        if kind == "image" and any(term in asset_text for term in ["framework", "stage", "pipeline", "method", "defense", "trustclip"]):
+            score += 10
+        elif kind == "chart":
+            score -= 4
+        elif kind == "table":
+            score -= 4
+
+    if is_attack_context:
+        if kind == "image" and any(term in asset_text for term in ["poison", "trigger", "backdoor", "attack"]):
+            score += 8
+        elif kind in {"table", "chart"} and is_result_context:
+            score += 2
+        elif kind in {"table", "chart"}:
+            score -= 16
+
+    if _slide_allows_equation(slide_text):
+        if kind in {"equation", "interline_equation", "formula"}:
+            score += 8
+    elif kind in {"equation", "interline_equation", "formula"}:
+        score -= 20
+
+    if re.search(r"\b(fig(?:ure)?|table)\s*\d+", caption):
+        score += 2
+
+    return score
+
+
+def visual_asset_display_kind(asset: dict[str, Any]) -> str:
+    kind = str(asset.get("kind") or "").lower()
+    caption = str(asset.get("caption") or "")
+    body = str(asset.get("body") or "")
+    text = f"{caption} {body}".lower()
+    if re.search(r"\btable\s*\d*\b", text) or caption.lower().startswith("table "):
+        return "Table"
+    if re.search(r"\bfig(?:ure)?\s*\d*\b", text) or caption.lower().startswith("figure "):
+        return "Figure"
+    if kind in {"equation", "interline_equation", "formula"}:
+        return "Equation"
+    if kind == "chart":
+        return "Chart"
+    if kind == "code":
+        return "Code"
+    return "Image"
+
+
 def build_ocr_assets(content_json: Path, latex_dir: Path, manifest_path: Path) -> list[dict[str, Any]]:
+    '''
+    ORIGINAL COMMENTED OUT:
+
+    def build_ocr_assets(content_json, latex_dir, manifest_path):
+        supported = {"image", "table", "chart", "code", "equation", "interline_equation"}
+        for item in data:
+            kind = str(item.get("type", "")).strip()
+            raw_caption = item.get("image_caption") or item.get("table_caption") or item.get("text") ...
+            caption = audit_asset_caption(raw_caption, kind, page)
+            if image_path exists: copy it
+            assets.append({"id": ..., "kind": kind, "caption": caption, "image": copied_path, "body": ...})
+
+    Problem:
+    - equations, logos, OCR fragments, and generic images all enter the same global pool.
+    - no quality/relevance metadata is recorded.
+    - later visual selection may pick the first matching kind, even if wrong.
+    '''
     if not content_json.exists() or content_json.suffix.lower() != ".json":
-        write_json(manifest_path, {"assets": [], "counts": {}})
+        write_json(manifest_path, {"assets": [], "counts": {}, "warnings": ["missing_content_json"]})
         return []
 
     data = json.loads(content_json.read_text(encoding="utf-8"))
     source_root = content_json.parent
     asset_dir = latex_dir / "ocr_assets"
     asset_dir.mkdir(parents=True, exist_ok=True)
+
     assets: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
+    warnings: list[str] = []
     supported = {"image", "table", "chart", "code", "equation", "interline_equation"}
 
     for item in data:
         kind = str(item.get("type", "")).strip()
         if kind not in supported:
             continue
+
         counts[kind] = counts.get(kind, 0) + 1
+        page = int(item.get("page_idx", 0)) + 1
+        asset_id = f"{kind}_{counts[kind]:02d}"
         raw_caption = (
             item.get("image_caption")
             or item.get("table_caption")
@@ -399,35 +584,50 @@ def build_ocr_assets(content_json: Path, latex_dir: Path, manifest_path: Path) -
             or item.get("code_body")
             or item.get("content")
         )
-        caption = audit_asset_caption(raw_caption, kind, int(item.get("page_idx", 0)) + 1)
+        caption = audit_asset_caption(raw_caption, kind, page)
+        body = normalize_latex_text(item.get("table_body") or item.get("code_body") or item.get("content"))[:1000]
+
         image_path = item.get("img_path")
         copied_path = ""
         if image_path:
             source_path = (source_root / str(image_path)).resolve()
             if source_path.exists():
                 suffix = source_path.suffix.lower() or ".jpg"
-                copied_path = str(asset_dir / f"{kind}_{counts[kind]:02d}{suffix}")
+                copied_path = str(asset_dir / f"{asset_id}{suffix}")
                 shutil.copyfile(source_path, copied_path)
-        assets.append(
-            {
-                "id": f"{kind}_{counts[kind]:02d}",
-                "kind": kind,
-                "page": int(item.get("page_idx", 0)) + 1,
-                "caption": caption[:500],
-                "image": copied_path,
-                "body": normalize_latex_text(item.get("table_body") or item.get("code_body") or item.get("content"))[:1000],
-            }
-        )
+
+        candidate = {
+            "id": asset_id,
+            "kind": kind,
+            "page": page,
+            "caption": caption[:500],
+            "image": copied_path,
+            "body": body,
+            "quality_warnings": [],
+        }
+
+        if not copied_path:
+            candidate["quality_warnings"].append("missing_image_path")
+        if _looks_like_noise_asset(candidate):
+            candidate["quality_warnings"].append("noise_or_generic_caption")
+        if kind in {"equation", "interline_equation"}:
+            candidate["quality_warnings"].append("formula_requires_slide_match")
+
+        # Keep tables/charts/images with real paths. Keep equations only for later explicit formula-matched slides.
+        if copied_path and not _generic_or_bad_caption(caption):
+            assets.append(candidate)
+        else:
+            warnings.append(f"dropped_asset:{asset_id}:{','.join(candidate['quality_warnings'])}")
 
     manifest = {
         "source": str(content_json),
         "asset_dir": str(asset_dir),
         "counts": counts,
         "assets": assets,
+        "warnings": warnings,
     }
     write_json(manifest_path, manifest)
     return assets
-
 
 def compact_markdown(markdown: str, max_chars: int = 42000) -> str:
     markdown = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", markdown)
@@ -533,41 +733,131 @@ def trim_speaker_text(speaker: str, max_words: int) -> str:
     return trimmed
 
 
+def activity_phrase(text: str) -> str:
+    phrase = re.sub(r"\s+", " ", text).strip(" .").lower()
+    replacements = {
+        "analyzes ": "analyzing ",
+        "detects ": "detecting ",
+        "filters ": "filtering ",
+        "refines ": "refining ",
+        "divides ": "dividing ",
+        "identifies ": "identifying ",
+        "applies ": "applying ",
+        "erases ": "erasing ",
+        "preserves ": "preserving ",
+        "finalizes ": "finalizing ",
+        "leverages ": "leveraging ",
+        "prevents ": "preventing ",
+        "reduces ": "reducing ",
+        "maintains ": "maintaining ",
+        "outperforms ": "outperforming ",
+        "computes ": "computing ",
+        "separates ": "separating ",
+        "models ": "modeling ",
+        "balances ": "balancing ",
+        "generates ": "generating ",
+        "optimizes ": "optimizing ",
+        "minimizes ": "minimizing ",
+        "maximizes ": "maximizing ",
+    }
+    for source, target in replacements.items():
+        if phrase.startswith(source):
+            return target + phrase[len(source):]
+    if phrase.startswith("iteratively evaluates "):
+        return "iteratively evaluating " + phrase[len("iteratively evaluates "):]
+    return phrase
+
+
+def focus_phrase(text: str) -> str:
+    phrase = re.sub(r"\s+", " ", text).strip(" .").lower()
+    phrase = phrase.replace("(gcns)", "GCNs")
+    phrase = re.sub(r"^loss component one:\s*", "the stealth loss term ", phrase)
+    phrase = re.sub(r"^loss component two:\s*", "the attack loss term ", phrase)
+    if phrase.startswith("dataset:"):
+        return "the dataset choice, " + phrase.split(":", 1)[1].strip()
+    if phrase.startswith("architecture:"):
+        return "the model architecture, " + phrase.split(":", 1)[1].strip()
+    if phrase.startswith("attack loss maximizes "):
+        return "how the attack loss maximizes " + phrase[len("attack loss maximizes "):]
+    if phrase.startswith("evaluation should "):
+        return "why evaluation should " + phrase[len("evaluation should "):]
+    verb_map = {
+        "coordinate ": "the need to coordinate ",
+        "balance ": "the need to balance ",
+        "leverage ": "how it leverages ",
+        "model ": "how it models ",
+        "minimize ": "how the loss minimizes ",
+        "maximize ": "how the loss maximizes ",
+        "leverages": "how it leverages",
+        "models": "how it models",
+        "nodes represent": "how nodes represent",
+        "edges encode": "how edges encode",
+        "achieves": "how the method achieves",
+        "reduces": "how the method reduces",
+        "maintains": "how the method maintains",
+        "outperforms": "how the method outperforms",
+        "evades": "how the attack evades",
+        "resists": "how the attack resists",
+        "robust against": "the method is robust against",
+    }
+    for source, target in verb_map.items():
+        if phrase.startswith(source):
+            return target + phrase[len(source):]
+    return phrase
+
+
 def natural_followup_sentences(slide_title: str, bullets: list[str], desired_minutes: int) -> list[str]:
+    '''
+    ORIGINAL COMMENTED OUT:
+
+    else:
+        templates = [
+            (f"This point anchors the slide around {first}.", f"The next detail to watch is {second}."),
+            (f"[old audience-facing prompt around {first}]", f"With that context, {second} becomes easier to place."),
+            (f"A natural way to read this slide is through {first}.", f"That framing leaves {second} as the supporting detail."),
+        ]
+
+    Problem:
+    - The old audience-facing prompt was unnatural.
+    - It appears in subtitles exactly as seen in your screenshot.
+    '''
     clean_bullets = [re.sub(r"\s+", " ", bullet).strip(" .") for bullet in bullets if str(bullet).strip()]
     if not clean_bullets:
-        return ["This keeps the talk focused on the paper's main claim."]
+        return ["This keeps the talk focused on the paper's central result."]
 
     title = slide_title.lower()
     first = clean_bullets[0].lower()
     second = clean_bullets[1].lower() if len(clean_bullets) > 1 else first
-    variant = sum(ord(ch) for ch in f"{slide_title} {first} {second}") % 3
+    first_activity = activity_phrase(first)
+    second_activity = activity_phrase(second)
+    first_focus = focus_phrase(first)
+    second_focus = focus_phrase(second)
+
     if any(term in title for term in ["problem", "threat", "attack", "vulnerab"]):
-        templates = [
-            (f"This sets up why {first} matters for the rest of the paper.", f"It also explains why {second} cannot be treated as a minor detail."),
-            (f"Here, {first} is the pressure point behind the paper's threat model.", f"The slide also shows why {second} needs direct evaluation."),
-            (f"The useful reading is that {first} changes how the rest of the result should be judged.", f"That makes {second} part of the core risk, not background detail."),
+        first_fact = first_focus if first_focus.startswith("the fact that") else f"the fact that {first}"
+        second_fact = second_focus if second_focus.startswith("the fact that") else f"the fact that {second}"
+        return [
+            f"This frames the threat model around {first_fact}.",
+            f"This also keeps attention on {second_fact}.",
         ]
-    elif any(term in title for term in ["method", "stage", "framework", "pipeline", "partition", "filter", "unlearning"]):
-        templates = [
-            (f"The important step is how {first} supports the defense pipeline.", f"That choice makes {second} easier to interpret in the later results."),
-            (f"The method is easier to follow if {first} is treated as the organizing step.", f"From there, {second} becomes the next constraint the system has to satisfy."),
-            (f"At this point, {first} explains the design logic rather than just another component.", f"The role of {second} is to keep that design tied to measurable behavior."),
+
+    if any(term in title for term in ["method", "stage", "framework", "pipeline", "partition", "filter", "unlearning"]):
+        return [
+            f"In practice, this step focuses on {first_activity}.",
+            f"From there, the next design constraint is {second_activity}.",
         ]
-    elif any(term in title for term in ["experiment", "result", "metric", "setup", "performance"]):
-        templates = [
-            (f"The main reading cue is whether {first} is reflected in the reported outcomes.", f"This makes {second} useful for judging the method's reliability."),
-            (f"For the results, {first} gives the most direct way to read the comparison.", f"The second check is whether {second} stays consistent across settings."),
-            (f"The experiment should be read through {first}, since it connects the setup to the claim.", f"Then {second} helps decide whether the gain is robust or narrow."),
+
+    if any(term in title for term in ["experiment", "result", "metric", "setup", "performance"]):
+        return [
+            f"The comparison should focus on {first_focus}.",
+            f"The next check is consistency across the evaluation for {second_focus}.",
         ]
-    else:
-        templates = [
-            (f"This point anchors the slide around {first}.", f"The next detail to watch is {second}."),
-            (f"The slide mainly asks the audience to keep {first} in view.", f"With that context, {second} becomes easier to place."),
-            (f"A natural way to read this slide is through {first}.", f"That framing leaves {second} as the supporting detail."),
-        ]
-    sentences = list(templates[variant])
-    return sentences
+
+    first_intro = "Start by noting" if first_focus.startswith(("how ", "the need to ")) else "Start by noting that"
+    return [
+        f"{first_intro} {first_focus}.",
+        f"Then connect that to {second_focus}.",
+    ]
 
 
 def expand_speaker_text(
@@ -624,7 +914,7 @@ def validate_plan(plan: dict[str, Any], desired_minutes: int, pacing_plan: dict[
         bullets = [str(item).strip() for item in bullets_raw if str(item).strip()]
         bullets = bullets[:4]
         if len(bullets) < 2:
-            bullets.extend(["Key idea from the paper", "Evidence and implication"])
+            bullets.extend(["Core idea from the paper", "Why it matters for the result"])
         speaker = str(slide.get("speaker") or f"This slide explains {slide_title}.").strip()
         speaker = expand_speaker_text(speaker, slide_title, bullets, desired_minutes, int(pacing_plan["words_per_slide"]))
         cursor_hint = str(slide.get("cursor_hint") or "main bullet list").strip()
@@ -640,10 +930,29 @@ def validate_plan(plan: dict[str, Any], desired_minutes: int, pacing_plan: dict[
             break
     while len(normalized) < max_slides:
         idx = len(normalized) + 1
-        slide_title = f"Evidence Detail {idx}"
-        bullets = ["Paper evidence to inspect", "Implication for the main claim"]
+        fallback_titles = ["Takeaways and Limitations", "Broader Implications", "Discussion Points"]
+        fallback_bullets = [
+            [
+                "Universal attacks can remain effective at low poisoning rates",
+                "Stealth and accuracy must be evaluated together",
+                "Broader architectures remain important future validation targets",
+            ],
+            [
+                "Graph structure helps coordinate class-specific trigger behavior",
+                "Robustness claims depend on defense-aware evaluation",
+                "Deployment settings may change the practical risk profile",
+            ],
+            [
+                "The paper connects attack strength with visual imperceptibility",
+                "Evaluation should track both ASR and benign accuracy",
+                "Future work should test stronger adaptive defenses",
+            ],
+        ]
+        fallback_index = min(idx - 1, len(fallback_titles) - 1)
+        slide_title = fallback_titles[fallback_index]
+        bullets = fallback_bullets[fallback_index]
         speaker = expand_speaker_text(
-            f"This slide adds supporting evidence for the paper's main claim.",
+            "The final discussion connects the result back to practical robustness and remaining uncertainty.",
             slide_title,
             bullets,
             desired_minutes,
@@ -685,53 +994,78 @@ def tex_escape(text: str) -> str:
 
 
 def select_visual_asset(slide: dict[str, Any], assets: list[dict[str, Any]], used_ids: set[str]) -> dict[str, Any] | None:
-    if not assets:
-        return None
-    text = f"{slide.get('title', '')} {' '.join(slide.get('bullets', []))}".lower()
-    preferred: list[str]
-    if any(term in text for term in ["benchmark", "dataset", "comparison"]):
-        preferred = ["table", "chart", "image"]
-    elif any(term in text for term in ["metric", "evaluation", "experiment", "result"]):
-        preferred = ["table", "chart", "equation", "image"]
-    elif any(term in text for term in ["method", "model", "pipeline", "system", "framework", "retrieval", "rag", "graph", "score", "loss", "objective", "confidence", "equation", "formula"]):
-        preferred = ["equation", "image", "code", "chart", "table"]
-    elif any(term in text for term in ["visual", "layout", "tree search", "slide"]):
-        preferred = ["image", "chart", "code"]
-    else:
-        preferred = ["image", "chart", "table", "equation", "code"]
+    '''
+    ORIGINAL COMMENTED OUT:
 
-    for kind in preferred:
-        for asset in assets:
-            if asset["id"] not in used_ids and asset["kind"] == kind and asset.get("image"):
-                used_ids.add(asset["id"])
-                return asset
+    def select_visual_asset(slide, assets, used_ids):
+        if any(term in text for term in ["benchmark", "dataset", "comparison"]):
+            preferred = ["table", "chart", "image"]
+        elif any(term in text for term in ["metric", "evaluation", "experiment", "result"]):
+            preferred = ["table", "chart", "equation", "image"]
+        elif any(term in text for term in ["method", "model", "pipeline", ...]):
+            preferred = ["equation", "image", "code", "chart", "table"]
+        ...
+        return first unused asset matching kind
+
+    Problem:
+    - only matches asset kind, not semantic relevance.
+    - puts equation before image for method/model slides.
+    - can select OCR fragments and logos.
+    '''
+    slide_text = f"{slide.get('title', '')} {' '.join(slide.get('bullets', []))}".lower()
+    min_score = 6.0
+    if _contains_terms(slide_text, ["introduction", "background", "motivation", "rise of", "overview"]):
+        min_score = 12.0
+    if _contains_terms(slide_text, ["stage", "partition", "filter", "unlearning"]):
+        min_score = 12.0
+
+    ranked: list[tuple[float, dict[str, Any]]] = []
     for asset in assets:
-        if asset["id"] not in used_ids and asset.get("image"):
-            used_ids.add(asset["id"])
-            return asset
-    return None
+        asset_id = asset.get("id")
+        if not asset_id:
+            continue
+        score = score_visual_asset(slide, asset)
+        if asset_id in used_ids:
+            score -= 2.0
+        if score >= min_score:
+            ranked.append((score, asset))
+
+    if not ranked:
+        return None
+
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    chosen = ranked[0][1]
+    used_ids.add(chosen["id"])
+    return chosen
 
 
 def assign_visual_assets(slides: list[dict[str, Any]], assets: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
-    used_assets: set[str] = set()
+    '''
+    ORIGINAL COMMENTED OUT:
+
     selected = [select_visual_asset(slide, assets, used_assets) for slide in slides]
     if any(asset and asset.get("kind") == "equation" for asset in selected):
         return selected
-
     equation = next((asset for asset in assets if asset.get("kind") == "equation" and asset.get("image")), None)
     if not equation:
         return selected
-
-    preferred_terms = ["method", "model", "retrieval", "rag", "graph", "score", "loss", "objective", "confidence"]
     replacement_index = 0
-    for index, slide in enumerate(slides):
-        text = f"{slide.get('title', '')} {' '.join(slide.get('bullets', []))}".lower()
-        if any(term in text for term in preferred_terms):
-            replacement_index = index
-            break
+    ...
     selected[replacement_index] = equation
     return selected
 
+    Problem:
+    - this forced at least one equation into the deck.
+    - it caused irrelevant OCR equations such as "sim_before" to appear in introduction slides.
+    '''
+    used_assets: set[str] = set()
+    selected: list[dict[str, Any] | None] = []
+    for index, slide in enumerate(slides):
+        if index == 0:
+            selected.append(None)
+            continue
+        selected.append(select_visual_asset(slide, assets, used_assets))
+    return selected
 
 def latex_image_path(path_text: str) -> str:
     return Path(path_text).resolve().as_posix()
@@ -800,7 +1134,8 @@ def write_beamer(plan: dict[str, Any], tex_path: Path, ocr_assets: list[dict[str
             if asset.get("kind") == "equation":
                 asset_note = f"{{\\scriptsize\\textbf{{OCR Equation, p.{asset['page']}.}}}}"
             else:
-                asset_note = f"{{\\scriptsize\\textbf{{OCR {tex_escape(asset['kind'].title())}, p.{asset['page']}.}} {tex_escape(caption[:180])}}}"
+                display_kind = visual_asset_display_kind(asset)
+                asset_note = f"{{\\scriptsize\\textbf{{OCR {tex_escape(display_kind)}, p.{asset['page']}.}} {tex_escape(caption[:150])}}}"
             lines.extend(
                 [
                     r"\end{itemize}",
@@ -1568,5 +1903,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
