@@ -155,6 +155,8 @@ def main() -> None:
     metadata = write_fixture_result(fixture_dir)
     task_id = "test-" + uuid.uuid4().hex
     upload_id = None
+    upload_id_2 = None
+    aimooc_project_id = None
     speech_skills_path = resolve_agent_skills_md("SpeechAgent")
     speech_skills_bytes = speech_skills_path.read_bytes()
 
@@ -236,6 +238,13 @@ def main() -> None:
             assert graph_payload["visited_check"][-1] == "RenderAgent"
             assert any(edge["type"] == "parallel_fanout" for edge in graph_payload["edges"])
             assert any(call.startswith("PlannerAgent.") for call in graph_payload["tool_call_check"])
+            assert "aimooc" in graph_payload["flows"]
+            assert "hermes_adapter" in graph_payload["flows"]["aimooc"]["frameworks"]
+            assert "CoursePlannerAgent" in graph_payload["aimooc_visited_check"]
+            frameworks = client.get("/api/agent-frameworks")
+            assert frameworks.status_code == 200
+            assert any(item["key"] == "langgraph" for item in frameworks.json())
+            assert any(item["key"] == "hermes_adapter" for item in frameworks.json())
             skills = client.get("/api/agents/SpeechAgent/skills.md")
             assert skills.status_code == 200
             assert "F5TTS synthesis" in skills.text
@@ -385,6 +394,77 @@ def main() -> None:
             assert upload.status_code == 200
             upload_payload = upload.json()
             upload_id = upload_payload["id"]
+            upload_2 = client.post(
+                "/api/upload",
+                files={"file": ("reference.pdf", b"%PDF-1.4\n% fixture 2\n", "application/pdf")},
+            )
+            assert upload_2.status_code == 200
+            upload_id_2 = upload_2.json()["id"]
+
+            batch = client.post(
+                "/api/uploads/batch",
+                files=[
+                    ("files", ("batch_a.pdf", b"%PDF-1.4\n% batch a\n", "application/pdf")),
+                    ("files", ("batch_b.txt", b"course notes", "text/plain")),
+                ],
+            )
+            assert batch.status_code == 200
+            assert batch.json()["count"] == 2
+
+            aimooc = client.post(
+                "/api/aimooc/projects",
+                json={
+                    "sources": [
+                        {"source_id": upload_id, "role": "primary", "priority": 1, "title": "Primary source"},
+                        {"source_id": upload_id_2, "role": "reference", "priority": 3, "title": "Reference source"},
+                    ],
+                    "course_title": "AIMOOC Test Course",
+                    "audience": "engineering students",
+                    "learning_objectives": ["Understand source material", "Build lessons"],
+                    "requirements": "Create a small test course.",
+                    "total_minutes": 12,
+                    "module_count": 2,
+                    "lessons_per_module": 1,
+                    "preferred_style": "teaching_walkthrough",
+                    "language": "zh-TW",
+                    "difficulty": "intermediate",
+                    "include_quizzes": True,
+                    "include_avatar": True,
+                    "avatar_mode": "presenter_card",
+                    "agentic_framework": "hermes_adapter",
+                },
+            )
+            assert aimooc.status_code == 200, aimooc.text
+            aimooc_payload = aimooc.json()
+            aimooc_project_id = aimooc_payload["project_id"]
+            assert aimooc_payload["framework"] == "hermes_adapter"
+            assert aimooc_payload["source_count"] == 2
+            assert len(aimooc_payload["course_plan"]["modules"]) == 2
+            assert aimooc_payload["package_manifest"]["version_id"] == "v001_initial"
+            assert client.get("/aimooc").status_code == 200
+            artifact = client.get(f"/api/aimooc/projects/{aimooc_project_id}/artifacts/course_plan.json")
+            assert artifact.status_code == 200
+            assert "AIMOOC Test Course" in artifact.text
+            revision = client.post(
+                f"/api/aimooc/projects/{aimooc_project_id}/revise",
+                json={
+                    "base_version": "v001_initial",
+                    "feedback": [
+                        {
+                            "target_type": "lesson",
+                            "target_id": "module_01_lesson_01",
+                            "severity": "normal",
+                            "instruction": "Make the first lesson more intuitive.",
+                            "preferred_action": "simplify",
+                        }
+                    ],
+                },
+            )
+            assert revision.status_code == 200, revision.text
+            assert revision.json()["revision"]["version_id"].endswith("_feedback")
+            versions = client.get(f"/api/aimooc/projects/{aimooc_project_id}/versions")
+            assert versions.status_code == 200
+            assert len(versions.json()) >= 2
 
             payload = CreateTaskPayload(
                 upload_id=upload_id,
@@ -472,6 +552,30 @@ def main() -> None:
         if upload_id:
             for upload_file in (ROOT / "web" / "data" / "uploads").glob(f"{upload_id}.*"):
                 upload_file.unlink(missing_ok=True)
+        if upload_id_2:
+            for upload_file in (ROOT / "web" / "data" / "uploads").glob(f"{upload_id_2}.*"):
+                upload_file.unlink(missing_ok=True)
+        for meta_path in (ROOT / "web" / "data" / "uploads").glob("*.json"):
+            try:
+                payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if str(payload.get("file_name", "")).startswith("batch_"):
+                for upload_file in (ROOT / "web" / "data" / "uploads").glob(f"{payload.get('id')}.*"):
+                    upload_file.unlink(missing_ok=True)
+        if aimooc_project_id:
+            project_dir = ROOT / "result" / "aimooc_projects" / aimooc_project_id
+            if project_dir.exists():
+                shutil.rmtree(project_dir)
+            db_path = ROOT / "web" / "data" / "aimooc.sqlite3"
+            if db_path.exists():
+                import sqlite3
+
+                with sqlite3.connect(db_path) as conn:
+                    conn.execute("DELETE FROM aimooc_feedback WHERE project_id=?", (aimooc_project_id,))
+                    conn.execute("DELETE FROM aimooc_versions WHERE project_id=?", (aimooc_project_id,))
+                    conn.execute("DELETE FROM aimooc_projects WHERE project_id=?", (aimooc_project_id,))
+                    conn.commit()
         speech_skills_path.write_bytes(speech_skills_bytes)
         if fixture_dir.exists():
             shutil.rmtree(fixture_dir)

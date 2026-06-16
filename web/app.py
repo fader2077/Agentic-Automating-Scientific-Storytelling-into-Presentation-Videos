@@ -2,6 +2,7 @@
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -21,14 +22,21 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from src.agentic_graph import agentic_graph_status
+from src.agentic_frameworks import available_frameworks, normalize_framework
+from src.aimooc_pipeline import run_aimooc_pipeline
+from src.aimooc_schema import AIMOOCSpec, FeedbackItem, SourceItem, SourceManifest, write_model
+from src.feedback_loop import revise_project, write_feedback_round
+from src.source_ingest import build_source_item, build_source_manifest
 
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 TASK_DIR = DATA_DIR / "tasks"
+PROJECT_DB = DATA_DIR / "aimooc.sqlite3"
 SETTINGS_PATH = DATA_DIR / "settings.json"
 STATIC_DIR = ROOT / "static"
+AIMOOC_STATIC_DIR = STATIC_DIR / "aimooc"
 SAMPLE_VIDEO_CANDIDATES = []
 ARTIFACT_FILES = {}
 LOCAL_OLLAMA_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -50,8 +58,9 @@ AGENTS_DIR = ROOT.parent / "src" / "agents"
 AGENTS_MANIFEST = AGENTS_DIR / "manifest.json"
 TOOLS_MANIFEST = ROOT.parent / "src" / "tools" / "manifest.json"
 WEB_RESULT_DIR = ROOT.parent / "result" / "web_jobs"
+AIMOOC_RESULT_DIR = ROOT.parent / "result" / "aimooc_projects"
 
-for directory in [DATA_DIR, UPLOAD_DIR, TASK_DIR, STATIC_DIR, WEB_RESULT_DIR]:
+for directory in [DATA_DIR, UPLOAD_DIR, TASK_DIR, STATIC_DIR, AIMOOC_STATIC_DIR, WEB_RESULT_DIR, AIMOOC_RESULT_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_STEP_TICKS = {
@@ -157,6 +166,40 @@ class CreateTaskPayload(BaseModel):
     preferred_slide_style: str = Field(min_length=2)
 
 
+class AIMOOCSourceSelection(BaseModel):
+    source_id: str
+    role: str = "reference"
+    priority: int = Field(default=3, ge=1, le=5)
+    title: str | None = None
+    notes: str = ""
+
+
+class CreateAIMOOCProjectPayload(BaseModel):
+    source_ids: list[str] = Field(default_factory=list)
+    sources: list[AIMOOCSourceSelection] = Field(default_factory=list)
+    course_title: str = Field(min_length=2)
+    audience: str = Field(min_length=2)
+    learning_objectives: list[str] = Field(default_factory=list)
+    requirements: str = ""
+    total_minutes: int = Field(ge=3, le=600)
+    module_count: int = Field(ge=1, le=20)
+    lessons_per_module: int = Field(ge=1, le=20)
+    preferred_style: str = "teaching_walkthrough"
+    language: str = "zh-TW"
+    difficulty: str = "intermediate"
+    include_quizzes: bool = True
+    include_assignments: bool = False
+    include_avatar: bool = True
+    avatar_mode: str = "presenter_card"
+    feedback_mode: bool = True
+    agentic_framework: str = "langgraph"
+
+
+class AIMOOCFeedbackPayload(BaseModel):
+    base_version: str = "v001_initial"
+    feedback: list[FeedbackItem]
+
+
 class OllamaTestPayload(BaseModel):
     ollama_url: str = Field(min_length=1)
     text_model: str = Field(min_length=1)
@@ -164,6 +207,105 @@ class OllamaTestPayload(BaseModel):
 
 class SkillsUpdatePayload(BaseModel):
     content: str = Field(min_length=1, max_length=20000)
+
+
+def db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(PROJECT_DB)
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS aimooc_projects (
+            project_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            status TEXT NOT NULL,
+            framework TEXT NOT NULL,
+            result_dir TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            payload_json TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS aimooc_versions (
+            project_id TEXT NOT NULL,
+            version_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            PRIMARY KEY(project_id, version_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS aimooc_feedback (
+            project_id TEXT NOT NULL,
+            round_id TEXT NOT NULL,
+            base_version TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            PRIMARY KEY(project_id, round_id)
+        )
+        """
+    )
+    conn.commit()
+    return conn
+
+
+def upsert_project(project_id: str, title: str, status: str, framework: str, result_dir: Path, payload: dict[str, Any]) -> None:
+    now = now_ts()
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO aimooc_projects(project_id, title, status, framework, result_dir, created_at, updated_at, payload_json)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+              title=excluded.title,
+              status=excluded.status,
+              framework=excluded.framework,
+              result_dir=excluded.result_dir,
+              updated_at=excluded.updated_at,
+              payload_json=excluded.payload_json
+            """,
+            (project_id, title, status, framework, str(result_dir), now, now, json.dumps(payload, ensure_ascii=False)),
+        )
+        conn.commit()
+
+
+def add_project_version(project_id: str, version_id: str, path: Path) -> None:
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO aimooc_versions(project_id, version_id, path, created_at)
+            VALUES(?, ?, ?, ?)
+            """,
+            (project_id, version_id, str(path), now_ts()),
+        )
+        conn.commit()
+
+
+def project_row(project_id: str) -> sqlite3.Row:
+    with db_connect() as conn:
+        row = conn.execute("SELECT * FROM aimooc_projects WHERE project_id=?", (project_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="AIMOOC project not found")
+    return row
+
+
+def project_summary(row: sqlite3.Row) -> dict[str, Any]:
+    payload = json.loads(row["payload_json"])
+    return {
+        "project_id": row["project_id"],
+        "title": row["title"],
+        "status": row["status"],
+        "framework": row["framework"],
+        "result_dir": row["result_dir"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "source_count": len(payload.get("source_manifest", {}).get("sources", [])),
+        "version_id": payload.get("package", {}).get("version_id", "v001_initial"),
+    }
 
 def normalize_step_ticks(raw: dict[str, Any] | None) -> dict[str, int]:
     merged = dict(DEFAULT_STEP_TICKS)
@@ -1054,10 +1196,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/aimooc/assets", StaticFiles(directory=AIMOOC_STATIC_DIR / "assets"), name="aimooc-assets")
 
 
 @app.on_event("startup")
 def startup_worker() -> None:
+    db_connect().close()
     if os.environ.get("WEB_DISABLE_WORKER_THREAD") == "1":
         return
     ensure_worker()
@@ -1081,6 +1225,14 @@ def replay_page(task_id: str) -> str:
     path = STATIC_DIR / "replay.html"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Replay page missing")
+    return path.read_text(encoding="utf-8")
+
+
+@app.get("/aimooc", response_class=HTMLResponse)
+def aimooc_page() -> str:
+    path = AIMOOC_STATIC_DIR / "index.html"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="AIMOOC UI has not been built")
     return path.read_text(encoding="utf-8")
 
 
@@ -1131,6 +1283,11 @@ def get_agent_graph() -> dict[str, Any]:
     return agentic_graph_status(AGENTS_MANIFEST, TOOLS_MANIFEST)
 
 
+@app.get("/api/agent-frameworks")
+def get_agent_frameworks() -> list[dict[str, Any]]:
+    return available_frameworks()
+
+
 @app.get("/api/agents/{agent_key}/skills.md")
 def get_agent_skills(agent_key: str) -> FileResponse:
     path = resolve_agent_skills_md(agent_key)
@@ -1175,9 +1332,189 @@ async def upload_paper(file: UploadFile = File(...)) -> dict[str, Any]:
     return payload
 
 
+@app.post("/api/uploads/batch")
+async def upload_batch(files: list[UploadFile] = File(...)) -> dict[str, Any]:
+    uploaded = []
+    for file in files:
+        uploaded.append(await upload_paper(file))
+    return {"count": len(uploaded), "uploads": uploaded}
+
+
 @app.get("/api/uploads")
 def get_uploads() -> list[dict[str, Any]]:
     return list_uploads()
+
+
+def source_selection_payload(payload: CreateAIMOOCProjectPayload) -> list[AIMOOCSourceSelection]:
+    if payload.sources:
+        return payload.sources
+    selections: list[AIMOOCSourceSelection] = []
+    for index, source_id in enumerate(payload.source_ids):
+        selections.append(
+            AIMOOCSourceSelection(
+                source_id=source_id,
+                role="primary" if index == 0 else "reference",
+                priority=1 if index == 0 else 3,
+            )
+        )
+    return selections
+
+
+def load_upload_meta(upload_id: str) -> dict[str, Any]:
+    upload_meta = UPLOAD_DIR / f"{upload_id}.json"
+    if not upload_meta.exists():
+        raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}")
+    return json.loads(upload_meta.read_text(encoding="utf-8"))
+
+
+@app.post("/api/aimooc/projects")
+def create_aimooc_project(payload: CreateAIMOOCProjectPayload) -> dict[str, Any]:
+    selections = source_selection_payload(payload)
+    if not selections:
+        raise HTTPException(status_code=422, detail="At least one source is required")
+    project_id = str(uuid.uuid4())
+    result_dir = AIMOOC_RESULT_DIR / project_id
+    source_items: list[SourceItem] = []
+    for selection in selections:
+        item = build_source_item(
+            load_upload_meta(selection.source_id),
+            role=selection.role,
+            priority=selection.priority,
+            notes=selection.notes,
+        )
+        if selection.title:
+            item.title = selection.title
+        source_items.append(item)
+    manifest = build_source_manifest(project_id, source_items)
+    framework = normalize_framework(payload.agentic_framework)
+    spec = AIMOOCSpec(
+        course_title=payload.course_title,
+        audience=payload.audience,
+        learning_objectives=payload.learning_objectives,
+        requirements=payload.requirements,
+        total_minutes=payload.total_minutes,
+        module_count=payload.module_count,
+        lessons_per_module=payload.lessons_per_module,
+        preferred_style=payload.preferred_style,
+        language=payload.language,
+        difficulty=payload.difficulty,
+        include_quizzes=payload.include_quizzes,
+        include_assignments=payload.include_assignments,
+        include_avatar=payload.include_avatar,
+        avatar_mode=payload.avatar_mode,
+        feedback_mode=payload.feedback_mode,
+        agentic_framework=framework,
+    )
+    result_dir.mkdir(parents=True, exist_ok=True)
+    source_manifest_path = result_dir / "source_manifest.json"
+    course_spec_path = result_dir / "course_spec.json"
+    write_model(source_manifest_path, manifest)
+    write_model(course_spec_path, spec)
+    package = run_aimooc_pipeline(source_manifest_path, course_spec_path, result_dir)
+    stored_payload = {
+        "source_manifest": manifest.model_dump(),
+        "course_spec": spec.model_dump(),
+        "package": package,
+    }
+    upsert_project(project_id, spec.course_title, "completed", framework, result_dir, stored_payload)
+    add_project_version(project_id, "v001_initial", result_dir / "versions" / "v001_initial")
+    return get_aimooc_project(project_id)
+
+
+@app.get("/api/aimooc/projects")
+def list_aimooc_projects() -> list[dict[str, Any]]:
+    with db_connect() as conn:
+        rows = conn.execute("SELECT * FROM aimooc_projects ORDER BY updated_at DESC LIMIT 50").fetchall()
+    return [project_summary(row) for row in rows]
+
+
+@app.get("/api/aimooc/projects/{project_id}")
+def get_aimooc_project(project_id: str) -> dict[str, Any]:
+    row = project_row(project_id)
+    payload = json.loads(row["payload_json"])
+    result_dir = Path(row["result_dir"])
+    package_path = result_dir / "course_package_manifest.json"
+    course_plan_path = result_dir / "course_plan.json"
+    return {
+        **project_summary(row),
+        "payload": payload,
+        "package_manifest": json.loads(package_path.read_text(encoding="utf-8")) if package_path.exists() else None,
+        "course_plan": json.loads(course_plan_path.read_text(encoding="utf-8")) if course_plan_path.exists() else None,
+    }
+
+
+@app.post("/api/aimooc/projects/{project_id}/feedback")
+def create_aimooc_feedback(project_id: str, payload: AIMOOCFeedbackPayload) -> dict[str, Any]:
+    row = project_row(project_id)
+    project_dir = Path(row["result_dir"])
+    feedback_round = write_feedback_round(project_dir, payload.base_version, payload.feedback)
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO aimooc_feedback(project_id, round_id, base_version, payload_json, created_at)
+            VALUES(?, ?, ?, ?, ?)
+            """,
+            (
+                project_id,
+                feedback_round.round_id,
+                feedback_round.base_version,
+                feedback_round.model_dump_json(),
+                feedback_round.created_at,
+            ),
+        )
+        conn.commit()
+    return feedback_round.model_dump()
+
+
+@app.post("/api/aimooc/projects/{project_id}/revise")
+def revise_aimooc_project(project_id: str, payload: AIMOOCFeedbackPayload) -> dict[str, Any]:
+    row = project_row(project_id)
+    project_dir = Path(row["result_dir"])
+    feedback_round = write_feedback_round(project_dir, payload.base_version, payload.feedback)
+    revision = revise_project(project_dir, payload.base_version, feedback_round)
+    add_project_version(project_id, revision.version_id, project_dir / "versions" / revision.version_id)
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO aimooc_feedback(project_id, round_id, base_version, payload_json, created_at)
+            VALUES(?, ?, ?, ?, ?)
+            """,
+            (project_id, feedback_round.round_id, feedback_round.base_version, feedback_round.model_dump_json(), feedback_round.created_at),
+        )
+        conn.execute(
+            "UPDATE aimooc_projects SET status=?, updated_at=? WHERE project_id=?",
+            ("revised", now_ts(), project_id),
+        )
+        conn.commit()
+    return {"feedback_round": feedback_round.model_dump(), "revision": revision.model_dump()}
+
+
+@app.get("/api/aimooc/projects/{project_id}/versions")
+def list_aimooc_versions(project_id: str) -> list[dict[str, Any]]:
+    project_row(project_id)
+    with db_connect() as conn:
+        rows = conn.execute(
+            "SELECT version_id, path, created_at FROM aimooc_versions WHERE project_id=? ORDER BY created_at ASC",
+            (project_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.get("/api/aimooc/projects/{project_id}/artifacts/{artifact_path:path}")
+def get_aimooc_artifact(project_id: str, artifact_path: str) -> FileResponse:
+    row = project_row(project_id)
+    root = Path(row["result_dir"]).resolve()
+    artifact = (root / artifact_path).resolve()
+    if not str(artifact).startswith(str(root)) or not artifact.exists() or artifact.is_dir():
+        raise HTTPException(status_code=404, detail="AIMOOC artifact not found")
+    media_type = "application/octet-stream"
+    if artifact.suffix == ".json":
+        media_type = "application/json"
+    elif artifact.suffix == ".mp4":
+        media_type = "video/mp4"
+    elif artifact.suffix in {".md", ".txt", ".srt"}:
+        media_type = "text/plain"
+    return FileResponse(str(artifact), media_type=media_type, filename=artifact.name)
 
 
 @app.post("/api/tasks")
@@ -1310,6 +1647,7 @@ def health() -> JSONResponse:
             "gpu": gpu_status(),
             "pipeline_python": str(resolve_pipeline_python()),
             "agentic_graph": agentic_graph_status(AGENTS_MANIFEST, TOOLS_MANIFEST),
+            "agentic_frameworks": available_frameworks(),
             "queue": queue_state(),
         }
     )

@@ -4,12 +4,17 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+node_modules/
+web/frontend/node_modules/
+web/frontend/dist/
 
 # Runtime data and generated media
 result/
 web/data/uploads/
 web/data/tasks/
+web/data/aimooc.sqlite3
 web/server*.log
+web/avatar/
 *.log
 
 # Local models/assets supplied by operator

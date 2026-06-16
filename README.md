@@ -1,6 +1,11 @@
 ﻿# Agentic Automating Scientific Storytelling into Presentation Videos
 
-A local control room that turns an uploaded scientific paper into an academic presentation video. The real pipeline uses MinerU OCR, local Ollama planning, Beamer slides, F5TTS narration, cursor grounding, subtitles, and ffmpeg MP4 composition.
+A local control room with two supported modes:
+
+1. Single PDF scientific-paper-to-video generation.
+2. Multi-source AIMOOC course-package generation.
+
+The single-PDF pipeline uses MinerU OCR, local Ollama planning, Beamer slides, F5TTS narration, cursor grounding, subtitles, and ffmpeg MP4 composition. The AIMOOC pipeline keeps those capabilities available as lesson-level renderers while adding source manifests, course specs, course plans, lesson artifacts, feedback versions, avatar manifests, SQLite project state, and a React/Tailwind course-builder UI.
 
 ## Features
 
@@ -15,6 +20,7 @@ A local control room that turns an uploaded scientific paper into an academic pr
 - Inspect every agent and tool used by the runtime.
 - Open and edit each agent `skills.md` from the web UI.
 - Inspect the LangGraph-backed agent handoff graph at `/api/agent-graph`.
+- Use `/aimooc` for multi-source course building with React, Tailwind CSS, SQLite project history, framework selection, feedback revisions, and avatar-mode selection.
 
 ## Agents
 
@@ -25,6 +31,15 @@ A local control room that turns an uploaded scientific paper into an academic pr
 - `SpeechAgent`: prepares reference voice metadata, stages F5TTS jobs, and generates per-slide narration audio.
 - `GroundingAgent`: reads slide regions, aligns narration beats to visual focus targets, and writes cursor routes.
 - `RenderAgent`: packages slide images, audio, subtitles, cursor overlay, and final MP4 artifacts through ffmpeg.
+- `SourceIngestionAgent`: receives multiple uploaded sources and writes priority/role-aware source manifests.
+- `CourseUnderstandingAgent`: keeps primary/reference/prerequisite/assignment/reading sources separate for course planning.
+- `CoursePlannerAgent`: builds syllabus, modules, lessons, and pacing from structured course specs.
+- `LessonBuilderAgent`: writes per-lesson slides, scripts, quizzes, and lesson manifests.
+- `QuizAgent`: creates objective-aligned formative checks.
+- `FeedbackAgent`: maps user feedback to artifact-level revision targets.
+- `RevisionAgent`: creates versioned revisions without overwriting prior artifacts.
+- `AvatarDirectorAgent`: writes presenter-card/avatar policy and per-lesson avatar manifests.
+- `CoursePackagerAgent`: writes the final course package manifest.
 
 Each agent has an editable skills file under `src/agents/*/skills.md`. The web UI `Runtime capabilities` panel has `Open` and `Edit skills.md` controls for each agent.
 
@@ -44,9 +59,38 @@ SupervisorAgent
 
 The graph is exposed by `/api/agent-graph`, included in `/api/health`, and rendered in the Run page `Agentic graph` panel with node edges and tool-call trace. It uses a supervisor, conditional routes, parallel fanout, join gating, and repair cycles. Each graph node owns its declared skills and tools. The real pipeline subprocess still performs the heavy OCR, model, TTS, cursor, and ffmpeg work; LangGraph provides the inspectable agent handoff contract in the web orchestration layer.
 
+The AIMOOC UI also exposes agentic framework selection. `langgraph` keeps the existing native graph. `hermes_adapter` records a Hermes-compatible delegated-agent trace for AIMOOC planning without replacing the stable LangGraph implementation. OpenClaw is intentionally not embedded as a library because its current public shape is closer to a self-hosted personal assistant/control plane than a small importable workflow framework.
+
 ## Tools
 
 The runtime tool registry lives in `src/tools/manifest.json`. Current tools include PDF manifest reading, MinerU OCR routing, OCR asset normalization, section planning, Ollama dispatch, Beamer writing, figure grounding, subtitle alignment, F5TTS queueing, cursor routing, slide rendering, ffmpeg packaging, and MP4 verification.
+
+AIMOOC tools add batch source manifests, course spec writing, course planning, lesson packaging, feedback mapping, revision packaging, avatar direction, and avatar rendering.
+
+## AIMOOC Course Packages
+
+The multi-source pipeline writes:
+
+```text
+result/aimooc_projects/<project_id>/
+  source_manifest.json
+  course_spec.json
+  course_plan.json
+  agentic_trace.json
+  avatar_config.json
+  course_package_manifest.json
+  module_01_lesson_01/
+    slides.json
+    script.json
+    quiz.json
+    lesson_manifest.json
+    avatar_manifest.json
+  feedback_rounds/
+  versions/
+    v001_initial/
+```
+
+Source roles are `primary`, `reference`, `prerequisite`, `assignment`, and `reading`. Each source also has priority, title, and notes. Feedback revisions create new version directories instead of overwriting the base package.
 
 ## Runtime Controls
 
@@ -129,6 +173,20 @@ Open:
 http://127.0.0.1:8008
 ```
 
+Open AIMOOC mode:
+
+```text
+http://127.0.0.1:8008/aimooc
+```
+
+The AIMOOC frontend source is in `web/frontend` and builds to `web/static/aimooc`:
+
+```powershell
+cd web\frontend
+npm install
+npm run build
+```
+
 ## Run Pipeline Directly
 
 ```powershell
@@ -146,11 +204,35 @@ http://127.0.0.1:8008
   --ref_text "Reference speaker transcript."
 ```
 
+## Run AIMOOC Pipeline Directly
+
+```powershell
+.\.venv\Scripts\python.exe src\aimooc_pipeline.py `
+  --source_manifest result\project_001\source_manifest.json `
+  --course_spec result\project_001\course_spec.json `
+  --result_dir result\project_001 `
+  --avatar_config result\project_001\avatar_config.json
+```
+
+For feedback revisions:
+
+```powershell
+.\.venv\Scripts\python.exe src\aimooc_pipeline.py `
+  --source_manifest result\project_001\source_manifest.json `
+  --course_spec result\project_001\course_spec.json `
+  --feedback_round result\project_001\feedback_rounds\round_002.json `
+  --resume_from result\project_001\versions\v001_initial `
+  --result_dir result\project_001\versions\v002_feedback
+```
+
 ## Test
 
 ```powershell
 .\.venv\Scripts\python.exe -m py_compile src\real_pipeline.py src\cursor_router.py src\cursor_overlay.py src\speech_synth.py web\app.py web\test_api.py
 .\.venv\Scripts\python.exe web\test_api.py
+cd web\frontend
+npm audit
+npm run build
 ```
 
 `web/test_api.py` creates temporary fixture artifacts under ignored runtime directories and removes them after success. It also verifies GPU availability, settings, model/style APIs, skill editing roundtrip, OCR assets, artifacts, task history, replay, and TTS reference fallback creation.

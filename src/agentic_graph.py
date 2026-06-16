@@ -45,6 +45,22 @@ AGENT_FLOW = [
     "RenderAgent",
 ]
 
+AIMOOC_FLOW = [
+    "SupervisorAgent",
+    "SourceIngestionAgent",
+    "CourseUnderstandingAgent",
+    "CoursePlannerAgent",
+    "LessonBuilderAgent",
+    "QuizAgent",
+    "VisualAuditorAgent",
+    "FeedbackAgent",
+    "RevisionAgent",
+    "SpeechAgent",
+    "AvatarDirectorAgent",
+    "RenderAgent",
+    "CoursePackagerAgent",
+]
+
 
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
@@ -321,6 +337,26 @@ def graph_edges() -> list[dict[str, str]]:
     ]
 
 
+def aimooc_graph_edges() -> list[dict[str, str]]:
+    return [
+        {"source": "START", "target": "SupervisorAgent", "type": "entry"},
+        {"source": "SupervisorAgent", "target": "SourceIngestionAgent", "type": "mode_route"},
+        {"source": "SourceIngestionAgent", "target": "CourseUnderstandingAgent", "type": "handoff"},
+        {"source": "CourseUnderstandingAgent", "target": "CoursePlannerAgent", "type": "handoff"},
+        {"source": "CoursePlannerAgent", "target": "LessonBuilderAgent", "type": "module_fanout"},
+        {"source": "LessonBuilderAgent", "target": "QuizAgent", "type": "parallel_fanout"},
+        {"source": "LessonBuilderAgent", "target": "VisualAuditorAgent", "type": "parallel_fanout"},
+        {"source": "QuizAgent", "target": "FeedbackAgent", "type": "join"},
+        {"source": "VisualAuditorAgent", "target": "FeedbackAgent", "type": "join"},
+        {"source": "FeedbackAgent", "target": "RevisionAgent", "type": "conditional_revision"},
+        {"source": "RevisionAgent", "target": "SpeechAgent", "type": "handoff"},
+        {"source": "SpeechAgent", "target": "AvatarDirectorAgent", "type": "handoff"},
+        {"source": "AvatarDirectorAgent", "target": "RenderAgent", "type": "avatar_render"},
+        {"source": "RenderAgent", "target": "CoursePackagerAgent", "type": "package"},
+        {"source": "CoursePackagerAgent", "target": "END", "type": "finish"},
+    ]
+
+
 def agentic_graph_status(agents_path: Path, tools_path: Path) -> dict[str, Any]:
     agents = read_manifest(agents_path)
     tools_manifest = read_manifest(tools_path)
@@ -347,11 +383,29 @@ def agentic_graph_status(agents_path: Path, tools_path: Path) -> dict[str, Any]:
         "compiled": False,
         "execution_model": "supervisor + conditional edges + parallel fanout + repair cycles",
         "nodes": nodes,
-        "edges": graph_edges(),
+        "edges": graph_edges() + aimooc_graph_edges(),
+        "flows": {
+            "single_pdf": {
+                "agents": AGENT_FLOW,
+                "edges": graph_edges(),
+                "frameworks": ["langgraph"],
+            },
+            "aimooc": {
+                "agents": AIMOOC_FLOW,
+                "edges": aimooc_graph_edges(),
+                "frameworks": ["langgraph", "hermes_adapter"],
+            },
+        },
         "entrypoint": "SupervisorAgent",
         "finish": "RenderAgent",
         "visited_check": [],
         "tool_call_check": [],
+        "aimooc_visited_check": AIMOOC_FLOW,
+        "aimooc_tool_call_check": [
+            f"{agent['key']}.{tool_titles(agent, tools)[0]}" if tool_titles(agent, tools) else f"{agent['key']}.route"
+            for agent in agents
+            if str(agent.get("key")) in set(AIMOOC_FLOW)
+        ],
     }
     try:
         runner = build_langgraph_runner(agents, tools_manifest)

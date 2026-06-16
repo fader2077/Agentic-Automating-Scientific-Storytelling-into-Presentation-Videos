@@ -158,5 +158,85 @@
     "inputs": ["3_merage.mp4"],
     "outputs": ["duration metadata"],
     "uses_gpu": false
+  },
+  {
+    "key": "batch_source_manifest",
+    "title": "Batch Source Manifest",
+    "kind": "document",
+    "entrypoint": "src.source_ingest.build_source_manifest",
+    "purpose": "Create source_manifest.json from multiple uploaded course sources with role and priority metadata.",
+    "inputs": ["upload metadata list", "source roles", "priorities"],
+    "outputs": ["source_manifest.json"],
+    "uses_gpu": false
+  },
+  {
+    "key": "course_spec_writer",
+    "title": "Course Spec Writer",
+    "kind": "planning",
+    "entrypoint": "src.aimooc_schema.AIMOOCSpec",
+    "purpose": "Persist structured AIMOOC requirements including audience, objectives, duration, language, and avatar mode.",
+    "inputs": ["course form payload"],
+    "outputs": ["course_spec.json"],
+    "uses_gpu": false
+  },
+  {
+    "key": "course_planner",
+    "title": "Course Planner",
+    "kind": "planning",
+    "entrypoint": "src.course_planner.write_course_plan",
+    "purpose": "Build syllabus, module map, and lesson allocation from source manifest and course spec.",
+    "inputs": ["source_manifest.json", "course_spec.json"],
+    "outputs": ["course_plan.json", "agentic_trace.json"],
+    "uses_gpu": false
+  },
+  {
+    "key": "lesson_packager",
+    "title": "Lesson Packager",
+    "kind": "course",
+    "entrypoint": "src.lesson_builder.build_lesson_package",
+    "purpose": "Generate per-lesson slides.json, script.json, quiz.json, and lesson manifests.",
+    "inputs": ["course_plan.json", "course_spec.json"],
+    "outputs": ["lesson directories"],
+    "uses_gpu": false
+  },
+  {
+    "key": "feedback_mapper",
+    "title": "Feedback Mapper",
+    "kind": "revision",
+    "entrypoint": "src.feedback_loop.write_feedback_round",
+    "purpose": "Map user feedback to artifact-level revision instructions.",
+    "inputs": ["feedback payload", "base version"],
+    "outputs": ["feedback_rounds/*.json"],
+    "uses_gpu": false
+  },
+  {
+    "key": "revision_packager",
+    "title": "Revision Packager",
+    "kind": "revision",
+    "entrypoint": "src.feedback_loop.revise_project",
+    "purpose": "Create a new versioned course package without overwriting prior artifacts.",
+    "inputs": ["base version", "feedback round"],
+    "outputs": ["versions/v*_feedback"],
+    "uses_gpu": false
+  },
+  {
+    "key": "avatar_director",
+    "title": "Avatar Director",
+    "kind": "avatar",
+    "entrypoint": "src.avatar_director.build_avatar_config",
+    "purpose": "Choose presenter-card/avatar policy from course spec.",
+    "inputs": ["course_spec.json"],
+    "outputs": ["avatar_config.json"],
+    "uses_gpu": false
+  },
+  {
+    "key": "avatar_renderer",
+    "title": "Avatar Renderer",
+    "kind": "avatar",
+    "entrypoint": "src.avatar_renderer.render_avatar_manifest",
+    "purpose": "Render or describe presenter-card avatar outputs for each lesson.",
+    "inputs": ["lesson artifacts", "avatar_config.json"],
+    "outputs": ["avatar_manifest.json", "avatar_video.mp4 when enabled"],
+    "uses_gpu": false
   }
 ]

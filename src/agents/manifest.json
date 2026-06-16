@@ -86,5 +86,77 @@
     "skills_md": "RenderAgent/skills.md",
     "skills": ["ffmpeg composition", "subtitle burn-in", "MP4 verification", "artifact handoff"],
     "tools": ["ffmpeg_packager", "mp4_verifier"]
+  },
+  {
+    "key": "SourceIngestionAgent",
+    "title": "Source Ingestion Agent",
+    "stage": "aimooc_ingest",
+    "skills_md": "SourceIngestionAgent/skills.md",
+    "skills": ["multi-source intake", "source role assignment", "priority-aware manifest building"],
+    "tools": ["batch_source_manifest", "pdf_manifest"]
+  },
+  {
+    "key": "CourseUnderstandingAgent",
+    "title": "Course Understanding Agent",
+    "stage": "aimooc_understand",
+    "skills_md": "CourseUnderstandingAgent/skills.md",
+    "skills": ["source synthesis", "conflict checks", "concept map preparation"],
+    "tools": ["course_spec_writer", "course_planner"]
+  },
+  {
+    "key": "CoursePlannerAgent",
+    "title": "Course Planner Agent",
+    "stage": "aimooc_plan",
+    "skills_md": "CoursePlannerAgent/skills.md",
+    "skills": ["syllabus generation", "module allocation", "lesson pacing"],
+    "tools": ["course_planner"]
+  },
+  {
+    "key": "LessonBuilderAgent",
+    "title": "Lesson Builder Agent",
+    "stage": "aimooc_lesson",
+    "skills_md": "LessonBuilderAgent/skills.md",
+    "skills": ["lesson objectives", "slides", "script", "quiz"],
+    "tools": ["lesson_packager", "beamer_writer", "script_planner"]
+  },
+  {
+    "key": "QuizAgent",
+    "title": "Quiz Agent",
+    "stage": "aimooc_quiz",
+    "skills_md": "QuizAgent/skills.md",
+    "skills": ["formative quizzes", "answer checks", "assessment alignment"],
+    "tools": ["lesson_packager"]
+  },
+  {
+    "key": "FeedbackAgent",
+    "title": "Feedback Agent",
+    "stage": "aimooc_feedback",
+    "skills_md": "FeedbackAgent/skills.md",
+    "skills": ["feedback targeting", "artifact mapping", "revision scope"],
+    "tools": ["feedback_mapper"]
+  },
+  {
+    "key": "RevisionAgent",
+    "title": "Revision Agent",
+    "stage": "aimooc_revision",
+    "skills_md": "RevisionAgent/skills.md",
+    "skills": ["versioned revision", "rollback-safe edits", "artifact diff planning"],
+    "tools": ["revision_packager"]
+  },
+  {
+    "key": "AvatarDirectorAgent",
+    "title": "Avatar Director Agent",
+    "stage": "aimooc_avatar",
+    "skills_md": "AvatarDirectorAgent/skills.md",
+    "skills": ["presenter policy", "avatar placement", "gesture constraints"],
+    "tools": ["avatar_director", "avatar_renderer"]
+  },
+  {
+    "key": "CoursePackagerAgent",
+    "title": "Course Packager Agent",
+    "stage": "aimooc_package",
+    "skills_md": "CoursePackagerAgent/skills.md",
+    "skills": ["course package manifest", "version export", "artifact readiness"],
+    "tools": ["lesson_packager", "mp4_verifier"]
   }
 ]
