@@ -24,6 +24,7 @@ The single-PDF pipeline uses MinerU OCR, local Ollama planning, Beamer slides, F
 - Switch between the original single-PDF video generator and the multi-source AIMOOC builder from `http://127.0.0.1:8008`.
 - Select `langgraph`, `hermes_adapter`, or `openclaw_adapter` from the UI without replacing the native LangGraph graph.
 - Add a presenter-card avatar overlay to the final single-PDF MP4 and to AIMOOC lesson videos. The default local avatar lookup path is `web/avatar/kafka.jpg`.
+- Generate a real AIMOOC teaching video directly from multiple selected PDF sources. The system merges selected PDFs into `source_bundle.pdf`, runs the real OCR-to-video pipeline, then attaches the resulting `video.mp4` and avatar-integrated `avatar_video.mp4` to lesson artifacts.
 
 ## Agents
 
@@ -97,7 +98,21 @@ result/aimooc_projects/<project_id>/
 
 Source roles are `primary`, `reference`, `prerequisite`, `assignment`, and `reading`. Each source also has priority, title, and notes. Feedback revisions create new version directories instead of overwriting the base package.
 
-When `render_videos=true`, the AIMOOC API can reuse a completed single-PDF task video as the lesson video source through `lesson_video_task_id`. The lesson package then writes both `video.mp4` and `avatar_video.mp4`, plus an `avatar_manifest.json` that records the source video, avatar image, and position.
+When `render_videos=true`, the AIMOOC API has two paths:
+
+1. If `lesson_video_task_id` is supplied, it reuses that completed single-PDF task video as the lesson video source.
+2. If `lesson_video_task_id` is empty, it merges all selected PDF sources into `source_bundle.pdf` and runs `src/real_pipeline.py` on that multi-source bundle.
+
+The lesson package then writes both `video.mp4` and `avatar_video.mp4`, plus an `avatar_manifest.json` that records the source video, avatar image, backend, and position. The full course-level render metadata is stored in `course_video_manifest.json`.
+
+## Avatar and Talking-Head Integration
+
+The avatar layer follows Paper2Video's module separation: slides, subtitles, speech, cursor, and base video are rendered first; presenter media is added after that merge step. Paper2Video's public README describes the full path as LaTeX paper sources plus reference image/audio, then Slides -> Subtitles -> Speech -> Cursor -> Talking Head -> Merge, with Hallo2 as the documented talking-head backend.
+
+This repository supports:
+
+- `presenter_card`: stable local overlay using `web/avatar/kafka.jpg`.
+- `talking_head`: optional external hook. Set `AIMOOC_TALKING_HEAD_CMD` or `AvatarConfig.talking_head_command` with placeholders `{source_video}`, `{output_video}`, `{ref_image}`, `{ref_audio}`, and `{lesson_dir}`. If the hook is not configured, the renderer falls back to `presenter_card` and records the fallback reason in `avatar_manifest.json`.
 
 ## Runtime Controls
 
@@ -224,6 +239,18 @@ npm run build
   --result_dir result\project_001 `
   --avatar_config result\project_001\avatar_config.json `
   --render_media `
+  --generate_video_from_sources `
+  --avatar_image web\avatar\kafka.jpg
+```
+
+To reuse an existing single-PDF task video instead of generating from selected PDFs:
+
+```powershell
+.\.venv\Scripts\python.exe src\aimooc_pipeline.py `
+  --source_manifest result\project_001\source_manifest.json `
+  --course_spec result\project_001\course_spec.json `
+  --result_dir result\project_001 `
+  --render_media `
   --lesson_video_source result\job_manual\avatar_video.mp4 `
   --avatar_image web\avatar\kafka.jpg
 ```
@@ -257,8 +284,8 @@ Latest local validation on 2026-06-17:
 - `npm run build`: React/Tailwind AIMOOC UI built to `web/static/aimooc`.
 - `python -m py_compile`: passed for core pipeline, AIMOOC, avatar, web, and tests.
 - `python web/test_api.py`: passed.
-- Single-PDF real generation: `result/web_jobs/validation_15m_22_avatar/avatar_video.mp4`, 22 Beamer pages, 840.077 seconds, avatar overlay enabled.
-- AIMOOC real package: `result/aimooc_validation_15m_22`, OpenClaw adapter trace, one lesson with `video.mp4`, `avatar_video.mp4`, and `avatar_manifest.json`.
+- Single-PDF real generation: `result/web_jobs/validation_single_15m_22_avatar_after_multisource/avatar_video.mp4`, 22 Beamer pages, 840.1 seconds, avatar overlay enabled.
+- AIMOOC multi-source real generation: `result/aimooc_validation_multisource_15m_22_avatar`, two source PDFs merged into `source_bundle.pdf`, 22 Beamer pages, 840.133 seconds base course video, 840.108 seconds lesson `avatar_video.mp4`, OpenClaw adapter trace, and `course_video_manifest.json`.
 - Running web server: `http://127.0.0.1:8008`, `/` and `/aimooc` returned HTTP 200, GPU detected as NVIDIA GeForce RTX 4090.
 
 ## Authorship

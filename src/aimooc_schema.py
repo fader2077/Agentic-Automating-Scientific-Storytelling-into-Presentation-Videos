@@ -37,6 +37,7 @@ class AIMOOCSpec(BaseModel):
     total_minutes: int = Field(ge=3, le=600)
     module_count: int = Field(ge=1, le=20)
     lessons_per_module: int = Field(ge=1, le=20)
+    target_slide_count: int | None = Field(default=None, ge=5, le=30)
     preferred_style: str = "teaching_walkthrough"
     language: str = "zh-TW"
     difficulty: str = "intermediate"
@@ -104,12 +105,16 @@ class RevisionResult(BaseModel):
 class AvatarConfig(BaseModel):
     avatar_mode: str = "presenter_card"
     avatar_id: str = "default_teacher"
+    backend: str = "presenter_card"
     position: str = "bottom_right"
     size: str = "medium"
     style: str = "academic"
     expression_policy: str = "calm"
     gesture_policy: str = "minimal"
     lip_sync: bool = False
+    ref_image: str = "web/avatar/kafka.jpg"
+    ref_audio: str = "assets/demo/reference.wav"
+    talking_head_command: str = ""
 
 
 class PackageManifest(BaseModel):
@@ -121,6 +126,7 @@ class PackageManifest(BaseModel):
     lessons: list[dict[str, Any]]
     feedback_rounds: list[str] = Field(default_factory=list)
     avatar_config: str | None = None
+    course_video: dict[str, Any] | None = None
     created_at: float = Field(default_factory=time.time)
 
 

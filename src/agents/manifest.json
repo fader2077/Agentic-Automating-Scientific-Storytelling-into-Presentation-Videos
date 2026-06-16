@@ -93,7 +93,7 @@
     "stage": "aimooc_ingest",
     "skills_md": "SourceIngestionAgent/skills.md",
     "skills": ["multi-source intake", "source role assignment", "priority-aware manifest building"],
-    "tools": ["batch_source_manifest", "pdf_manifest"]
+    "tools": ["batch_source_manifest", "pdf_manifest", "source_bundle_builder"]
   },
   {
     "key": "CourseUnderstandingAgent",
@@ -117,7 +117,7 @@
     "stage": "aimooc_lesson",
     "skills_md": "LessonBuilderAgent/skills.md",
     "skills": ["lesson objectives", "slides", "script", "quiz"],
-    "tools": ["lesson_packager", "beamer_writer", "script_planner"]
+    "tools": ["lesson_packager", "beamer_writer", "script_planner", "course_video_pipeline"]
   },
   {
     "key": "QuizAgent",
@@ -157,6 +157,6 @@
     "stage": "aimooc_package",
     "skills_md": "CoursePackagerAgent/skills.md",
     "skills": ["course package manifest", "version export", "artifact readiness"],
-    "tools": ["lesson_packager", "mp4_verifier"]
+    "tools": ["lesson_packager", "course_video_pipeline", "mp4_verifier"]
   }
 ]

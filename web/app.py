@@ -187,6 +187,7 @@ class CreateAIMOOCProjectPayload(BaseModel):
     total_minutes: int = Field(ge=3, le=600)
     module_count: int = Field(ge=1, le=20)
     lessons_per_module: int = Field(ge=1, le=20)
+    target_slide_count: int | None = Field(default=None, ge=5, le=30)
     preferred_style: str = "teaching_walkthrough"
     language: str = "zh-TW"
     difficulty: str = "intermediate"
@@ -1423,6 +1424,7 @@ def create_aimooc_project(payload: CreateAIMOOCProjectPayload) -> dict[str, Any]
         total_minutes=payload.total_minutes,
         module_count=payload.module_count,
         lessons_per_module=payload.lessons_per_module,
+        target_slide_count=payload.target_slide_count,
         preferred_style=payload.preferred_style,
         language=payload.language,
         difficulty=payload.difficulty,
@@ -1442,6 +1444,7 @@ def create_aimooc_project(payload: CreateAIMOOCProjectPayload) -> dict[str, Any]
     if payload.render_videos and payload.lesson_video_task_id:
         lesson_video_source = resolve_task_artifact_path(payload.lesson_video_task_id, "video")
     avatar_image = ROOT / "avatar" / "kafka.jpg"
+    settings = load_settings()
     package = run_aimooc_pipeline(
         source_manifest_path,
         course_spec_path,
@@ -1449,6 +1452,13 @@ def create_aimooc_project(payload: CreateAIMOOCProjectPayload) -> dict[str, Any]
         render_media=payload.render_videos,
         lesson_video_source=lesson_video_source,
         avatar_image=avatar_image if avatar_image.exists() else None,
+        generate_video_from_sources=payload.render_videos and lesson_video_source is None,
+        pipeline_python=resolve_pipeline_python(),
+        pipeline_script=PIPELINE_SCRIPT,
+        model=settings["text_model"],
+        ollama_url=settings["ollama_url"],
+        temperature=float(settings["temperature"]),
+        top_p=float(settings["top_p"]),
     )
     stored_payload = {
         "source_manifest": manifest.model_dump(),

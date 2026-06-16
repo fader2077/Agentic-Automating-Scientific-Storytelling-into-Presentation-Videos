@@ -190,6 +190,26 @@
     "uses_gpu": false
   },
   {
+    "key": "source_bundle_builder",
+    "title": "Source Bundle Builder",
+    "kind": "document",
+    "entrypoint": "src.aimooc_pipeline.merge_pdf_sources",
+    "purpose": "Merge multiple selected PDF sources into source_bundle.pdf for real multi-source course-video generation.",
+    "inputs": ["source_manifest.json"],
+    "outputs": ["source_bundle.pdf", "course_video_manifest.json bundle section"],
+    "uses_gpu": false
+  },
+  {
+    "key": "course_video_pipeline",
+    "title": "Course Video Pipeline",
+    "kind": "render",
+    "entrypoint": "src.aimooc_pipeline.run_course_video_pipeline",
+    "purpose": "Run the real OCR-to-video pipeline on the multi-source PDF bundle and produce a teaching video.",
+    "inputs": ["source_bundle.pdf", "course_spec.json", "avatar_config.json"],
+    "outputs": ["generated_course_video/sat.json", "generated_course_video/3_merage.mp4", "course_video_manifest.json"],
+    "uses_gpu": true
+  },
+  {
     "key": "lesson_packager",
     "title": "Lesson Packager",
     "kind": "course",

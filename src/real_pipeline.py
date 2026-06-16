@@ -274,22 +274,29 @@ def run_mineru(pdf_path: Path, output_dir: Path, method: str = "ocr") -> tuple[P
         return existing_md[0], json_files[0] if json_files else existing_md[0]
 
     clean_dir(output_dir)
-    run(
-        [
-            "mineru",
-            "-p",
-            str(pdf_path),
-            "-o",
-            str(output_dir),
-            "-m",
-            method,
-            "-b",
-            "pipeline",
-            "-l",
-            "en",
-        ],
-        timeout=3600,
-    )
+    try:
+        run(
+            [
+                "mineru",
+                "-p",
+                str(pdf_path),
+                "-o",
+                str(output_dir),
+                "-m",
+                method,
+                "-b",
+                "pipeline",
+                "-l",
+                "en",
+            ],
+            timeout=3600,
+        )
+    except PipelineError:
+        md_files = sorted(output_dir.rglob("*.md"))
+        json_files = sorted(output_dir.rglob("*content_list*.json"))
+        if md_files:
+            return md_files[0], json_files[0] if json_files else md_files[0]
+        raise
     md_files = sorted(output_dir.rglob("*.md"))
     json_files = sorted(output_dir.rglob("*content_list*.json"))
     if not md_files:

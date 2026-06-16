@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import subprocess
+import os
+import shlex
 from pathlib import Path
 
 try:
@@ -153,6 +155,38 @@ def render_presenter_card_video(lesson_dir: Path, config: AvatarConfig, duration
     return video_path
 
 
+def render_talking_head_hook(
+    lesson_dir: Path,
+    config: AvatarConfig,
+    source_video: str | Path,
+    avatar_image: str | Path | None = None,
+) -> dict[str, object]:
+    command_template = config.talking_head_command or os.environ.get("AIMOOC_TALKING_HEAD_CMD", "")
+    if not command_template:
+        return {"rendered": False, "reason": "AIMOOC_TALKING_HEAD_CMD not configured"}
+    source = Path(source_video)
+    output = lesson_dir / "talking_head_video.mp4"
+    image = discover_avatar_image(avatar_image or config.ref_image)
+    replacements = {
+        "source_video": str(source),
+        "output_video": str(output),
+        "ref_image": str(image) if image else "",
+        "ref_audio": config.ref_audio,
+        "lesson_dir": str(lesson_dir),
+    }
+    command = command_template.format(**replacements)
+    subprocess.run(shlex.split(command), check=True, timeout=7200)
+    if not output.exists():
+        raise FileNotFoundError(f"Talking-head command did not write {output}")
+    return {
+        "rendered": True,
+        "video": str(output),
+        "avatar_image": str(image) if image else "",
+        "backend": "talking_head",
+        "command": command,
+    }
+
+
 def render_avatar_manifest(
     lesson_dir: Path,
     config: AvatarConfig,
@@ -163,18 +197,34 @@ def render_avatar_manifest(
     output = {
         "avatar_mode": config.avatar_mode,
         "avatar_id": config.avatar_id,
+        "backend": config.backend,
         "position": config.position,
         "rendered": False,
         "video": "",
         "source_video": str(source_video) if source_video else "",
         "avatar_image": "",
+        "paper2video_reference": "Paper2Video uses ref_img + ref_audio + Hallo2 talking-head generation before slide merge.",
     }
     if config.avatar_mode == "none":
         write_json(lesson_dir / "avatar_manifest.json", output)
         return output
-    if render_media and config.avatar_mode == "presenter_card":
+    if render_media and config.avatar_mode in {"presenter_card", "talking_head"}:
         try:
-            if source_video:
+            if source_video and config.avatar_mode == "talking_head":
+                hook_result = render_talking_head_hook(lesson_dir, config, source_video, avatar_image=avatar_image)
+                if hook_result.get("rendered"):
+                    output.update(hook_result)
+                else:
+                    result = compose_avatar_overlay(
+                        source_video,
+                        lesson_dir / "avatar_video.mp4",
+                        avatar_image=avatar_image,
+                        position=config.position,
+                    )
+                    output.update(result)
+                    output["backend"] = "presenter_card_fallback"
+                    output["fallback_reason"] = hook_result.get("reason", "")
+            elif source_video:
                 result = compose_avatar_overlay(
                     source_video,
                     lesson_dir / "avatar_video.mp4",

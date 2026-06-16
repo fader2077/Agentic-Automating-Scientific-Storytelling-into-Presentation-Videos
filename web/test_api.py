@@ -50,6 +50,7 @@ from web.app import (
 )
 
 from src.aimooc_schema import AvatarConfig
+from src.aimooc_pipeline import run_aimooc_pipeline
 from src.avatar_renderer import render_avatar_manifest
 from src.cursor_overlay import render_cursor_overlay_timeline
 from src.real_pipeline import (
@@ -169,6 +170,64 @@ def write_fixture_result(result_dir: Path) -> dict:
     (result_dir / "sat.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     (result_dir / "token.json").write_text(json.dumps({"mode": "fixture"}), encoding="utf-8")
     return metadata
+
+
+def write_valid_pdf(path: Path, text: str) -> None:
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), text)
+    doc.save(path)
+    doc.close()
+
+
+def write_fake_pipeline(path: Path) -> None:
+    path.write_text(
+        """
+import argparse, json, subprocess
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--paper_pdf", required=True)
+parser.add_argument("--result_dir", required=True)
+parser.add_argument("--desired_minutes", required=True)
+parser.add_argument("--target_slides", default="12")
+parser.add_argument("--goal_prompt", default="")
+parser.add_argument("--model", default="")
+parser.add_argument("--ollama_url", default="")
+parser.add_argument("--temperature", default="")
+parser.add_argument("--top_p", default="")
+parser.add_argument("--mineru_method", default="")
+args = parser.parse_args()
+result = Path(args.result_dir)
+result.mkdir(parents=True, exist_ok=True)
+video = result / "3_merage.mp4"
+subprocess.run([
+    "ffmpeg", "-y", "-loglevel", "error",
+    "-f", "lavfi", "-i", "color=c=white:s=320x180:d=1",
+    "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+    "-shortest", str(video)
+], check=True)
+slides_pdf = result / "slides.pdf"
+slides_pdf.write_bytes(b"%PDF-1.4\\n% fake\\n")
+sat = {
+    "steps": {
+        "beamer": {"slide_count": int(args.target_slides)},
+        "video": {"duration": 1.0}
+    },
+    "artifacts": {
+        "video": str(video),
+        "slides_pdf": str(slides_pdf),
+        "slides_tex": str(result / "slides.tex"),
+        "subtitles": str(result / "subtitles.srt"),
+        "script": str(result / "subtitle_w_cursor.txt")
+    }
+}
+(result / "sat.json").write_text(json.dumps(sat), encoding="utf-8")
+""".strip(),
+        encoding="utf-8",
+    )
 
 
 def main() -> None:
@@ -418,6 +477,80 @@ def main() -> None:
             )
             assert avatar_manifest["rendered"] is True
             assert Path(avatar_manifest["video"]).exists()
+            multi_source_dir = fixture_dir / "aimooc_multi_source"
+            source_a = fixture_dir / "source_a.pdf"
+            source_b = fixture_dir / "source_b.pdf"
+            write_valid_pdf(source_a, "Primary source content for AIMOOC video generation.")
+            write_valid_pdf(source_b, "Reference source content for AIMOOC video generation.")
+            fake_pipeline = fixture_dir / "fake_real_pipeline.py"
+            write_fake_pipeline(fake_pipeline)
+            (multi_source_dir / "source_manifest.json").parent.mkdir(parents=True, exist_ok=True)
+            (multi_source_dir / "source_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "project_id": "fixture_multi_source",
+                        "sources": [
+                            {
+                                "source_id": "source_a",
+                                "filename": source_a.name,
+                                "path": str(source_a),
+                                "source_type": "pdf",
+                                "role": "primary",
+                                "priority": 1,
+                                "title": "Primary source",
+                                "notes": "",
+                            },
+                            {
+                                "source_id": "source_b",
+                                "filename": source_b.name,
+                                "path": str(source_b),
+                                "source_type": "pdf",
+                                "role": "reference",
+                                "priority": 3,
+                                "title": "Reference source",
+                                "notes": "",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (multi_source_dir / "course_spec.json").write_text(
+                json.dumps(
+                    {
+                        "course_title": "Fixture Multi Source Course",
+                        "audience": "engineering students",
+                        "learning_objectives": ["Synthesize two sources"],
+                        "requirements": "Generate a video from selected PDFs.",
+                        "total_minutes": 15,
+                        "module_count": 1,
+                        "lessons_per_module": 1,
+                        "target_slide_count": 22,
+                        "preferred_style": "teaching_walkthrough",
+                        "language": "zh-TW",
+                        "difficulty": "intermediate",
+                        "include_quizzes": True,
+                        "include_assignments": False,
+                        "include_avatar": True,
+                        "avatar_mode": "presenter_card",
+                        "feedback_mode": True,
+                        "agentic_framework": "openclaw_adapter",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            multi_payload = run_aimooc_pipeline(
+                multi_source_dir / "source_manifest.json",
+                multi_source_dir / "course_spec.json",
+                multi_source_dir,
+                render_media=True,
+                generate_video_from_sources=True,
+                pipeline_python=Path(sys.executable),
+                pipeline_script=fake_pipeline,
+            )
+            assert Path(multi_payload["course_video"]["bundle"]["bundle_pdf"]).exists()
+            assert multi_payload["course_video"]["slide_count"] == 22
+            assert any("avatar_video.mp4" in lesson.get("artifacts", []) for lesson in multi_payload["lessons"])
 
 
             upload = client.post(

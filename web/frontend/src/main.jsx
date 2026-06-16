@@ -25,6 +25,7 @@ const emptySpec = {
   total_minutes: 30,
   module_count: 2,
   lessons_per_module: 2,
+  target_slide_count: 22,
   preferred_style: "teaching_walkthrough",
   language: "zh-TW",
   difficulty: "intermediate",
@@ -150,6 +151,7 @@ function App() {
         total_minutes: Number(spec.total_minutes),
         module_count: Number(spec.module_count),
         lessons_per_module: Number(spec.lessons_per_module),
+        target_slide_count: Number(spec.target_slide_count || 22),
         render_videos: Boolean(spec.render_videos),
         lesson_video_task_id: spec.render_videos && spec.lesson_video_task_id ? spec.lesson_video_task_id : null,
       };
@@ -305,9 +307,13 @@ function App() {
               <Field label="Lessons per module">
                 <input type="number" className="w-full rounded-lg border border-slate-200 p-2" value={spec.lessons_per_module} onChange={(e) => setSpec({ ...spec, lessons_per_module: e.target.value })} />
               </Field>
+              <Field label="Target slides">
+                <input type="number" className="w-full rounded-lg border border-slate-200 p-2" value={spec.target_slide_count} onChange={(e) => setSpec({ ...spec, target_slide_count: e.target.value })} />
+              </Field>
               <Field label="Avatar presenter">
                 <select className="w-full rounded-lg border border-slate-200 p-2" value={spec.avatar_mode} onChange={(e) => setSpec({ ...spec, avatar_mode: e.target.value, include_avatar: e.target.value !== "none" })}>
                   <option value="presenter_card">Presenter card</option>
+                  <option value="talking_head">Talking-head hook</option>
                   <option value="none">No avatar</option>
                 </select>
               </Field>
@@ -315,7 +321,7 @@ function App() {
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
               <label className="flex items-center gap-2 text-sm font-semibold">
                 <input type="checkbox" checked={spec.render_videos} onChange={(e) => setSpec({ ...spec, render_videos: e.target.checked })} />
-                Render lesson videos from an existing single-PDF video task
+                Generate lesson video from selected source PDFs
               </label>
               <Field label="Completed video task">
                 <select
@@ -324,7 +330,7 @@ function App() {
                   onChange={(e) => setSpec({ ...spec, lesson_video_task_id: e.target.value })}
                   disabled={!spec.render_videos}
                 >
-                  <option value="">Use presenter-card media only</option>
+                  <option value="">Run multi-source PDF video generation</option>
                   {tasks.map((task) => (
                     <option key={task.id} value={task.id}>
                       {task.upload_name} | {task.id.slice(0, 8)}
