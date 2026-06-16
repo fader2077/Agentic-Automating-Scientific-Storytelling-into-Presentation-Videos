@@ -164,6 +164,9 @@ class CreateTaskPayload(BaseModel):
     desired_minutes: int = Field(ge=1, le=20)
     target_slide_count: int = Field(default=12, ge=5, le=30)
     preferred_slide_style: str = Field(min_length=2)
+    agentic_framework: str = "langgraph"
+    avatar_mode: str = "presenter_card"
+    avatar_position: str = "bottom_right"
 
 
 class AIMOOCSourceSelection(BaseModel):
@@ -193,6 +196,8 @@ class CreateAIMOOCProjectPayload(BaseModel):
     avatar_mode: str = "presenter_card"
     feedback_mode: bool = True
     agentic_framework: str = "langgraph"
+    render_videos: bool = False
+    lesson_video_task_id: str | None = None
 
 
 class AIMOOCFeedbackPayload(BaseModel):
@@ -1023,7 +1028,8 @@ def build_pipeline_command(task: dict[str, Any]) -> list[str]:
     python_exe = str(resolve_pipeline_python())
     ref_audio = ROOT.parent / "assets" / "demo" / "reference.wav"
     ref_text = "Some call me nature, others call me mother nature."
-    return [
+    avatar_image = ROOT / "avatar" / "kafka.jpg"
+    command = [
         python_exe,
         str(PIPELINE_SCRIPT),
         "--paper_pdf",
@@ -1035,7 +1041,12 @@ def build_pipeline_command(task: dict[str, Any]) -> list[str]:
         "--target_slides",
         str(task.get("target_slide_count") or 12),
         "--goal_prompt",
-        f"{settings['system_prompt']}\n\nUser goal: {task['goal_prompt']}\nStyle: {task['preferred_slide_style']}",
+        (
+            f"{settings['system_prompt']}\n\n"
+            f"User goal: {task['goal_prompt']}\n"
+            f"Style: {task['preferred_slide_style']}\n"
+            f"Agentic framework: {task.get('agentic_framework', 'langgraph')}"
+        ),
         "--model",
         settings["text_model"],
         "--ollama_url",
@@ -1051,6 +1062,12 @@ def build_pipeline_command(task: dict[str, Any]) -> list[str]:
         "--ref_text",
         ref_text,
     ]
+    avatar_mode = task.get("avatar_mode", "none")
+    if avatar_mode != "none":
+        command.extend(["--avatar_mode", avatar_mode, "--avatar_position", task.get("avatar_position", "bottom_right")])
+        if avatar_image.exists():
+            command.extend(["--avatar_image", str(avatar_image)])
+    return command
 
 
 def apply_pipeline_event(task: dict[str, Any], payload: dict[str, Any]) -> None:
@@ -1360,6 +1377,17 @@ def source_selection_payload(payload: CreateAIMOOCProjectPayload) -> list[AIMOOC
     return selections
 
 
+def resolve_task_artifact_path(task_id: str, artifact_key: str = "video") -> Path:
+    task = read_task(task_id)
+    artifact_path = task.get("artifact_paths", {}).get(artifact_key)
+    if not artifact_path:
+        raise HTTPException(status_code=404, detail=f"Task artifact not found: {artifact_key}")
+    path = Path(artifact_path)
+    if not path.exists() or path.is_dir():
+        raise HTTPException(status_code=404, detail=f"Task artifact file missing: {artifact_key}")
+    return path
+
+
 def load_upload_meta(upload_id: str) -> dict[str, Any]:
     upload_meta = UPLOAD_DIR / f"{upload_id}.json"
     if not upload_meta.exists():
@@ -1410,11 +1438,24 @@ def create_aimooc_project(payload: CreateAIMOOCProjectPayload) -> dict[str, Any]
     course_spec_path = result_dir / "course_spec.json"
     write_model(source_manifest_path, manifest)
     write_model(course_spec_path, spec)
-    package = run_aimooc_pipeline(source_manifest_path, course_spec_path, result_dir)
+    lesson_video_source = None
+    if payload.render_videos and payload.lesson_video_task_id:
+        lesson_video_source = resolve_task_artifact_path(payload.lesson_video_task_id, "video")
+    avatar_image = ROOT / "avatar" / "kafka.jpg"
+    package = run_aimooc_pipeline(
+        source_manifest_path,
+        course_spec_path,
+        result_dir,
+        render_media=payload.render_videos,
+        lesson_video_source=lesson_video_source,
+        avatar_image=avatar_image if avatar_image.exists() else None,
+    )
     stored_payload = {
         "source_manifest": manifest.model_dump(),
         "course_spec": spec.model_dump(),
         "package": package,
+        "render_videos": payload.render_videos,
+        "lesson_video_task_id": payload.lesson_video_task_id,
     }
     upsert_project(project_id, spec.course_title, "completed", framework, result_dir, stored_payload)
     add_project_version(project_id, "v001_initial", result_dir / "versions" / "v001_initial")
@@ -1536,6 +1577,9 @@ def create_task(payload: CreateTaskPayload) -> dict[str, Any]:
         "desired_minutes": payload.desired_minutes,
         "target_slide_count": payload.target_slide_count,
         "preferred_slide_style": payload.preferred_slide_style,
+        "agentic_framework": normalize_framework(payload.agentic_framework),
+        "avatar_mode": payload.avatar_mode,
+        "avatar_position": payload.avatar_position,
         "upload_id": payload.upload_id,
         "upload_name": upload_info["file_name"],
         "upload_path": upload_info["saved_path"],

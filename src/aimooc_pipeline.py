@@ -31,6 +31,8 @@ def run_aimooc_pipeline(
     feedback_round_path: Path | None = None,
     resume_from: Path | None = None,
     render_media: bool = False,
+    lesson_video_source: Path | None = None,
+    avatar_image: Path | None = None,
 ) -> dict[str, object]:
     manifest = load_model(source_manifest_path, SourceManifest)
     spec = load_model(course_spec_path, AIMOOCSpec)
@@ -50,7 +52,36 @@ def run_aimooc_pipeline(
         avatar_config = build_avatar_config(spec)
     write_model(result_dir / "avatar_config.json", avatar_config)
     for lesson in lessons:
-        render_avatar_manifest(Path(str(lesson["dir"])), avatar_config, render_media=render_media)
+        lesson_dir = Path(str(lesson["dir"]))
+        artifacts = list(lesson.get("artifacts", []))
+        source_video_for_lesson: Path | None = None
+        if lesson_video_source and lesson_video_source.exists():
+            source_video_for_lesson = lesson_dir / "video.mp4"
+            shutil.copyfile(lesson_video_source, source_video_for_lesson)
+            if "video.mp4" not in artifacts:
+                artifacts.append("video.mp4")
+        avatar_manifest = render_avatar_manifest(
+            lesson_dir,
+            avatar_config,
+            render_media=render_media or bool(source_video_for_lesson),
+            source_video=source_video_for_lesson,
+            avatar_image=avatar_image,
+        )
+        if avatar_manifest.get("video") and "avatar_video.mp4" not in artifacts:
+            artifacts.append("avatar_video.mp4")
+        if "avatar_manifest.json" not in artifacts:
+            artifacts.append("avatar_manifest.json")
+        lesson["artifacts"] = artifacts
+        lesson_manifest_path = lesson_dir / "lesson_manifest.json"
+        if lesson_manifest_path.exists():
+            lesson_manifest = json.loads(lesson_manifest_path.read_text(encoding="utf-8"))
+            lesson_manifest.setdefault("artifacts", {})
+            if source_video_for_lesson:
+                lesson_manifest["artifacts"]["video"] = str(source_video_for_lesson)
+            if avatar_manifest.get("video"):
+                lesson_manifest["artifacts"]["avatar_video"] = str(avatar_manifest["video"])
+            lesson_manifest["artifacts"]["avatar_manifest"] = str(lesson_dir / "avatar_manifest.json")
+            write_json(lesson_manifest_path, lesson_manifest)
 
     feedback_paths: list[str] = []
     if feedback_round_path and feedback_round_path.exists():
@@ -89,6 +120,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--feedback_round", default="")
     parser.add_argument("--resume_from", default="")
     parser.add_argument("--render_media", action="store_true")
+    parser.add_argument("--lesson_video_source", default="")
+    parser.add_argument("--avatar_image", default="")
     return parser.parse_args()
 
 
@@ -102,6 +135,8 @@ def main() -> None:
         Path(args.feedback_round) if args.feedback_round else None,
         Path(args.resume_from) if args.resume_from else None,
         render_media=bool(args.render_media),
+        lesson_video_source=Path(args.lesson_video_source) if args.lesson_video_source else None,
+        avatar_image=Path(args.avatar_image) if args.avatar_image else None,
     )
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 

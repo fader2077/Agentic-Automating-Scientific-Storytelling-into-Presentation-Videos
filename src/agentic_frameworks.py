@@ -20,6 +20,13 @@ FRAMEWORKS = [
         "installed": importlib.util.find_spec("hermes") is not None or importlib.util.find_spec("hermes_agent") is not None,
         "mode": "adapter",
     },
+    {
+        "key": "openclaw_adapter",
+        "title": "OpenClaw Adapter",
+        "description": "OpenClaw-style autonomous agent trace for course planning, lesson building, critique, and packaging without replacing LangGraph.",
+        "installed": importlib.util.find_spec("openclaw") is not None,
+        "mode": "adapter",
+    },
 ]
 
 
@@ -38,6 +45,9 @@ def run_agentic_trace(framework: str, project_id: str, stages: list[str]) -> dic
     if selected == "hermes_adapter":
         calls = [f"HermesDelegate.spawn({stage})" for stage in stages]
         execution_model = "hermes-compatible delegated agents"
+    elif selected == "openclaw_adapter":
+        calls = [f"OpenClawAgent.run({stage})" for stage in stages]
+        execution_model = "openclaw-compatible autonomous agents"
     else:
         calls = [f"LangGraphNode.invoke({stage})" for stage in stages]
         execution_model = "langgraph supervisor graph"

@@ -29,6 +29,7 @@ from cursor_router import build_cursor_timeline
 from cursor_overlay import render_cursor_overlay_timeline
 from agentic_graph import build_adaptive_pacing_plan
 from speech_synth import synthesize_slide_audio
+from avatar_renderer import compose_avatar_overlay, discover_avatar_image
 
 
 DEFAULT_MODEL = "qwen3.6:27b"
@@ -860,6 +861,44 @@ def natural_followup_sentences(slide_title: str, bullets: list[str], desired_min
     ]
 
 
+def teaching_context_sentences(slide_title: str, bullets: list[str]) -> list[str]:
+    title = re.sub(r"\s+", " ", slide_title).strip()
+    clean_bullets = [re.sub(r"\s+", " ", item).strip().rstrip(".") for item in bullets if item.strip()]
+    first = clean_bullets[0].lower() if clean_bullets else "the central claim"
+    second = clean_bullets[1].lower() if len(clean_bullets) > 1 else "the supporting evidence"
+    third = clean_bullets[2].lower() if len(clean_bullets) > 2 else "the limitation to keep in mind"
+    lower_title = title.lower()
+    if any(term in lower_title for term in ["experiment", "result", "metric", "ablation", "evaluation", "performance"]):
+        return [
+            f"When reading this result, focus first on how {first} changes the interpretation of the experiment.",
+            f"The useful comparison is whether {second} stays consistent when the evaluation setting changes.",
+            f"This matters because the claim is only persuasive if {third} does not hide a trade-off.",
+        ]
+    if any(term in lower_title for term in ["method", "stage", "framework", "pipeline", "algorithm", "filter"]):
+        return [
+            f"The method is best understood as a sequence of decisions rather than a single black-box operation.",
+            f"The first decision controls {first}, while the next one checks whether {second} remains reliable.",
+            f"This makes the slide a bridge between the paper's motivation and the concrete implementation details.",
+        ]
+    if any(term in lower_title for term in ["problem", "motivation", "challenge", "attack", "threat", "vulnerab"]):
+        return [
+            f"The teaching point is to separate the observable symptom from the underlying cause.",
+            f"Here the symptom is {first}, but the deeper issue is how {second} affects the system as a whole.",
+            f"Keeping that distinction clear makes the later method and evaluation easier to follow.",
+        ]
+    if any(term in lower_title for term in ["limitation", "takeaway", "discussion", "future", "conclusion"]):
+        return [
+            f"The practical takeaway is not that the method is complete, but that it narrows the problem into testable parts.",
+            f"A careful reader should ask whether {first} and {second} would still hold under a stronger setting.",
+            f"That gives the ending a concrete research direction rather than only a summary of the slide deck.",
+        ]
+    return [
+        f"At this point in the lesson, the important move is to connect {first} with the slide title.",
+        f"That connection helps the audience understand why {second} is not just a detail but part of the argument.",
+        f"The next slide can then build on this idea without reintroducing the same background again.",
+    ]
+
+
 def expand_speaker_text(
     speaker: str,
     slide_title: str,
@@ -883,6 +922,12 @@ def expand_speaker_text(
             break
         if word_count(speaker) + word_count(addition) <= target_words + 8:
             speaker = f"{speaker} {addition}"
+    if word_count(speaker) < target_words:
+        for addition in teaching_context_sentences(slide_title, bullets):
+            if word_count(speaker) >= target_words:
+                break
+            if word_count(speaker) + word_count(addition) <= target_words + 12:
+                speaker = f"{speaker} {addition}"
     return trim_speaker_text(speaker, target_words)
 
 
@@ -1847,14 +1892,27 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     except UnicodeEncodeError:
         if not with_cursor.exists():
             raise
-    final_video = result_dir / "3_merage.mp4"
-    burn_subtitles(with_cursor, srt_path, final_video)
+    base_final_video = result_dir / "3_merage.mp4"
+    burn_subtitles(with_cursor, srt_path, base_final_video)
+    final_video = base_final_video
+    avatar_result: dict[str, object] = {}
+    if args.avatar_mode and args.avatar_mode != "none":
+        avatar_video = result_dir / "avatar_video.mp4"
+        avatar_result = compose_avatar_overlay(
+            base_final_video,
+            avatar_video,
+            avatar_image=args.avatar_image or discover_avatar_image(),
+            position=args.avatar_position,
+        )
+        final_video = avatar_video
     duration = ffprobe_duration(final_video)
     metadata["steps"]["video"] = {
         "seconds": round(time.time() - t, 3),
         "final_video": str(final_video),
+        "base_video": str(base_final_video),
         "duration": round(duration, 3),
         "subtitle_source": subtitle_source,
+        "avatar": avatar_result,
     }
     emit_event("done", "video", "Video composition completed.", metadata["steps"]["video"])
 
@@ -1872,6 +1930,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         "cursor": str(cursor_path),
         "subtitles": str(srt_path),
         "video": str(final_video),
+        "base_video": str(base_final_video),
     }
     write_json(result_dir / "sat.json", metadata)
     write_json(result_dir / "token.json", {"model": args.model, "mode": "ollama_api"})
@@ -1893,6 +1952,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mineru_method", default="ocr", choices=["ocr", "txt", "auto"])
     parser.add_argument("--ref_audio", default=str(ROOT / "assets" / "demo" / "reference.wav"))
     parser.add_argument("--ref_text", default=None)
+    parser.add_argument("--avatar_mode", default="none", choices=["none", "presenter_card"])
+    parser.add_argument("--avatar_image", default="")
+    parser.add_argument("--avatar_position", default="bottom_right", choices=["bottom_right", "bottom_left"])
     return parser.parse_args()
 
 

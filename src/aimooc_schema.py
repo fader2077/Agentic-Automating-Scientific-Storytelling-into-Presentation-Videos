@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 SourceRole = Literal["primary", "reference", "prerequisite", "assignment", "reading"]
 SourceType = Literal["pdf", "pptx", "docx", "md", "txt", "html", "url", "transcript", "unknown"]
-AgenticFramework = Literal["langgraph", "hermes_adapter"]
+AgenticFramework = Literal["langgraph", "hermes_adapter", "openclaw_adapter"]
 
 
 class SourceItem(BaseModel):

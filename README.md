@@ -21,6 +21,9 @@ The single-PDF pipeline uses MinerU OCR, local Ollama planning, Beamer slides, F
 - Open and edit each agent `skills.md` from the web UI.
 - Inspect the LangGraph-backed agent handoff graph at `/api/agent-graph`.
 - Use `/aimooc` for multi-source course building with React, Tailwind CSS, SQLite project history, framework selection, feedback revisions, and avatar-mode selection.
+- Switch between the original single-PDF video generator and the multi-source AIMOOC builder from `http://127.0.0.1:8008`.
+- Select `langgraph`, `hermes_adapter`, or `openclaw_adapter` from the UI without replacing the native LangGraph graph.
+- Add a presenter-card avatar overlay to the final single-PDF MP4 and to AIMOOC lesson videos. The default local avatar lookup path is `web/avatar/kafka.jpg`.
 
 ## Agents
 
@@ -59,7 +62,7 @@ SupervisorAgent
 
 The graph is exposed by `/api/agent-graph`, included in `/api/health`, and rendered in the Run page `Agentic graph` panel with node edges and tool-call trace. It uses a supervisor, conditional routes, parallel fanout, join gating, and repair cycles. Each graph node owns its declared skills and tools. The real pipeline subprocess still performs the heavy OCR, model, TTS, cursor, and ffmpeg work; LangGraph provides the inspectable agent handoff contract in the web orchestration layer.
 
-The AIMOOC UI also exposes agentic framework selection. `langgraph` keeps the existing native graph. `hermes_adapter` records a Hermes-compatible delegated-agent trace for AIMOOC planning without replacing the stable LangGraph implementation. OpenClaw is intentionally not embedded as a library because its current public shape is closer to a self-hosted personal assistant/control plane than a small importable workflow framework.
+The AIMOOC UI also exposes agentic framework selection. `langgraph` keeps the existing native graph. `hermes_adapter` records a Hermes-compatible delegated-agent trace for AIMOOC planning without replacing the stable LangGraph implementation. `openclaw_adapter` records an OpenClaw-style autonomous-agent trace for the same AIMOOC stages. Both adapters are selectable and inspectable even when the optional third-party package is not installed; the API marks them as `adapter` mode.
 
 ## Tools
 
@@ -84,6 +87,8 @@ result/aimooc_projects/<project_id>/
     script.json
     quiz.json
     lesson_manifest.json
+    video.mp4
+    avatar_video.mp4
     avatar_manifest.json
   feedback_rounds/
   versions/
@@ -91,6 +96,8 @@ result/aimooc_projects/<project_id>/
 ```
 
 Source roles are `primary`, `reference`, `prerequisite`, `assignment`, and `reading`. Each source also has priority, title, and notes. Feedback revisions create new version directories instead of overwriting the base package.
+
+When `render_videos=true`, the AIMOOC API can reuse a completed single-PDF task video as the lesson video source through `lesson_video_task_id`. The lesson package then writes both `video.mp4` and `avatar_video.mp4`, plus an `avatar_manifest.json` that records the source video, avatar image, and position.
 
 ## Runtime Controls
 
@@ -110,6 +117,8 @@ Visual labels are inferred from captions as well as MinerU asset type, so a tabl
 - `web/static/`: browser UI for upload, settings, model/style selectors, history, replay, agents, tools, OCR assets, and output preview.
 - `web/test_api.py`: backend and API smoke tests.
 - `src/real_pipeline.py`: real OCR-to-video pipeline.
+- `src/aimooc_pipeline.py`: multi-source AIMOOC package builder and lesson video packager.
+- `src/avatar_renderer.py`: presenter-card avatar overlay and lesson avatar manifest writer.
 - `src/cursor_router.py`: deterministic cursor route generation through `build_cursor_timeline`.
 - `src/cursor_overlay.py`: cursor overlay rendering through `render_cursor_overlay_timeline`.
 - `src/speech_synth.py`: F5TTS per-slide speech generation through `synthesize_slide_audio`.
@@ -158,7 +167,7 @@ If that file is missing, `src/real_pipeline.py` first uses the bundled F5TTS `ba
 
 Cursor overlay does not require a repository image asset. `src/cursor_overlay.py` draws the cursor directly with an ffmpeg `drawbox` filter from `cursor.json`.
 
-The requested duration is treated as a pacing target, not a hard fill requirement; outputs may finish up to about one minute short to preserve natural speech. A LangGraph pacing planner chooses final slide count, content-slide budget, per-slide word budget, F5TTS speed policy, and subtitle source. If the user selects 12 slides, the pipeline targets 12 final Beamer pages including title and roadmap. F5TTS now runs at natural speed with one synthesis call per slide, matching the earlier stable voice behavior and avoiding artificial pauses around punctuation, hyphenated terms, or acronyms. Duration is controlled by agent-assigned script budget instead of slowing the synthesizer or padding silence. ScriptAgent expands short narration with varied academic bridge sentences and avoids repeated checklist openers. Burned-in subtitles are generated from a WhisperX ASR pass over the generated audio when available, then widened and held through each slide's narration window so spoken words and visible subtitles stay aligned.
+The requested duration is treated as a pacing target, not a hard fill requirement; outputs may finish up to about one minute short to preserve natural speech. A LangGraph pacing planner chooses final slide count, content-slide budget, per-slide word budget, F5TTS speed policy, and subtitle source. If the user selects 12 slides, the pipeline targets 12 final Beamer pages including title and roadmap. F5TTS now runs at natural speed with one synthesis call per slide, matching the earlier stable voice behavior and avoiding artificial pauses around punctuation, hyphenated terms, or acronyms. Duration is controlled by agent-assigned script budget instead of slowing the synthesizer or padding silence. Long talks raise the script word budget so the narration reaches the target by adding natural teaching context, not by stretching audio. ScriptAgent expands short narration with varied academic bridge sentences and avoids repeated checklist openers. Burned-in subtitles are generated from a WhisperX ASR pass over the generated audio when available, then widened and held through each slide's narration window so spoken words and visible subtitles stay aligned.
 
 ## Run Web UI
 
@@ -201,7 +210,9 @@ npm run build
   --top_p 0.9 `
   --mineru_method ocr `
   --ref_audio assets\demo\reference.wav `
-  --ref_text "Reference speaker transcript."
+  --ref_text "Reference speaker transcript." `
+  --avatar_mode presenter_card `
+  --avatar_image web\avatar\kafka.jpg
 ```
 
 ## Run AIMOOC Pipeline Directly
@@ -211,7 +222,10 @@ npm run build
   --source_manifest result\project_001\source_manifest.json `
   --course_spec result\project_001\course_spec.json `
   --result_dir result\project_001 `
-  --avatar_config result\project_001\avatar_config.json
+  --avatar_config result\project_001\avatar_config.json `
+  --render_media `
+  --lesson_video_source result\job_manual\avatar_video.mp4 `
+  --avatar_image web\avatar\kafka.jpg
 ```
 
 For feedback revisions:
@@ -235,7 +249,17 @@ npm audit
 npm run build
 ```
 
-`web/test_api.py` creates temporary fixture artifacts under ignored runtime directories and removes them after success. It also verifies GPU availability, settings, model/style APIs, skill editing roundtrip, OCR assets, artifacts, task history, replay, and TTS reference fallback creation.
+`web/test_api.py` creates temporary fixture artifacts under ignored runtime directories and removes them after success. It also verifies GPU availability, settings, model/style APIs, skill editing roundtrip, OCR assets, artifacts, task history, replay, TTS reference fallback creation, avatar overlay rendering, and AIMOOC video packaging.
+
+Latest local validation on 2026-06-17:
+
+- `npm install`: up to date, 0 vulnerabilities.
+- `npm run build`: React/Tailwind AIMOOC UI built to `web/static/aimooc`.
+- `python -m py_compile`: passed for core pipeline, AIMOOC, avatar, web, and tests.
+- `python web/test_api.py`: passed.
+- Single-PDF real generation: `result/web_jobs/validation_15m_22_avatar/avatar_video.mp4`, 22 Beamer pages, 840.077 seconds, avatar overlay enabled.
+- AIMOOC real package: `result/aimooc_validation_15m_22`, OpenClaw adapter trace, one lesson with `video.mp4`, `avatar_video.mp4`, and `avatar_manifest.json`.
+- Running web server: `http://127.0.0.1:8008`, `/` and `/aimooc` returned HTTP 200, GPU detected as NVIDIA GeForce RTX 4090.
 
 ## Authorship
 

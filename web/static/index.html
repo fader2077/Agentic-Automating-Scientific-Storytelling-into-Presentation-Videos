@@ -78,6 +78,7 @@
           <div class="panel-header">
             <p class="eyebrow">Source Intake</p>
             <h2>Queue a presentation video run</h2>
+            <a class="mode-link" href="/aimooc">Open multi-source course builder</a>
           </div>
           <form id="task-form" class="stack">
             <label class="upload-box">
@@ -103,6 +104,28 @@
               <label>
                 <span>Slide style</span>
                 <select id="preferred_slide_style" name="preferred_slide_style"></select>
+              </label>
+              <label>
+                <span>Agentic framework</span>
+                <select id="agentic_framework" name="agentic_framework">
+                  <option value="langgraph">LangGraph</option>
+                  <option value="hermes_adapter">Hermes Adapter</option>
+                  <option value="openclaw_adapter">OpenClaw Adapter</option>
+                </select>
+              </label>
+              <label>
+                <span>Avatar presenter</span>
+                <select id="avatar_mode" name="avatar_mode">
+                  <option value="presenter_card">Presenter card</option>
+                  <option value="none">No avatar</option>
+                </select>
+              </label>
+              <label>
+                <span>Avatar position</span>
+                <select id="avatar_position" name="avatar_position">
+                  <option value="bottom_right">Bottom right</option>
+                  <option value="bottom_left">Bottom left</option>
+                </select>
               </label>
             </div>
             <div id="style-preview-grid" class="style-preview-grid"></div>

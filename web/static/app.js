@@ -507,6 +507,9 @@ taskForm.addEventListener("submit", async (event) => {
         desired_minutes: Number(raw.desired_minutes),
         target_slide_count: Number(raw.target_slide_count || 12),
         preferred_slide_style: raw.preferred_slide_style,
+        agentic_framework: raw.agentic_framework || "langgraph",
+        avatar_mode: raw.avatar_mode || "presenter_card",
+        avatar_position: raw.avatar_position || "bottom_right",
       }),
     });
     renderTask(task);

@@ -39,6 +39,7 @@ from web.app import (
     CreateTaskPayload,
     apply_pipeline_event,
     app,
+    build_pipeline_command,
     build_steps,
     finalize_task_artifacts,
     initialize_task_runtime,
@@ -48,6 +49,8 @@ from web.app import (
     write_task,
 )
 
+from src.aimooc_schema import AvatarConfig
+from src.avatar_renderer import render_avatar_manifest
 from src.cursor_overlay import render_cursor_overlay_timeline
 from src.real_pipeline import (
     audit_asset_caption,
@@ -103,7 +106,25 @@ def write_fixture_result(result_dir: Path) -> dict:
     files["agentic_pacing"].write_text(json.dumps({"total_slides": 12, "content_slides": 11}), encoding="utf-8")
     files["cursor"].write_text(json.dumps({"points": []}), encoding="utf-8")
     files["subtitles"].write_text("1\n00:00:00,000 --> 00:00:01,000\nFixture narration.\n", encoding="utf-8")
-    files["video"].write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=white:s=320x180:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=stereo:sample_rate=44100",
+            "-shortest",
+            str(files["video"]),
+        ],
+        check=True,
+    )
 
     ocr_assets = result_dir / "ocr_assets.json"
     ocr_assets.write_text(
@@ -157,6 +178,7 @@ def main() -> None:
     upload_id = None
     upload_id_2 = None
     aimooc_project_id = None
+    aimooc_project_ids = []
     speech_skills_path = resolve_agent_skills_md("SpeechAgent")
     speech_skills_bytes = speech_skills_path.read_bytes()
 
@@ -240,11 +262,13 @@ def main() -> None:
             assert any(call.startswith("PlannerAgent.") for call in graph_payload["tool_call_check"])
             assert "aimooc" in graph_payload["flows"]
             assert "hermes_adapter" in graph_payload["flows"]["aimooc"]["frameworks"]
+            assert "openclaw_adapter" in graph_payload["flows"]["aimooc"]["frameworks"]
             assert "CoursePlannerAgent" in graph_payload["aimooc_visited_check"]
             frameworks = client.get("/api/agent-frameworks")
             assert frameworks.status_code == 200
             assert any(item["key"] == "langgraph" for item in frameworks.json())
             assert any(item["key"] == "hermes_adapter" for item in frameworks.json())
+            assert any(item["key"] == "openclaw_adapter" for item in frameworks.json())
             skills = client.get("/api/agents/SpeechAgent/skills.md")
             assert skills.status_code == 200
             assert "F5TTS synthesis" in skills.text
@@ -385,6 +409,15 @@ def main() -> None:
             render_cursor_overlay_timeline(str(cursor_input), str(cursor_output), str(cursor_json), cursor_size=12)
             assert cursor_output.exists()
             assert cursor_output.stat().st_size > 0
+            avatar_lesson_dir = fixture_dir / "avatar_lesson"
+            avatar_manifest = render_avatar_manifest(
+                avatar_lesson_dir,
+                AvatarConfig(avatar_mode="presenter_card", position="bottom_right"),
+                render_media=True,
+                source_video=cursor_input,
+            )
+            assert avatar_manifest["rendered"] is True
+            assert Path(avatar_manifest["video"]).exists()
 
 
             upload = client.post(
@@ -437,6 +470,7 @@ def main() -> None:
             assert aimooc.status_code == 200, aimooc.text
             aimooc_payload = aimooc.json()
             aimooc_project_id = aimooc_payload["project_id"]
+            aimooc_project_ids.append(aimooc_project_id)
             assert aimooc_payload["framework"] == "hermes_adapter"
             assert aimooc_payload["source_count"] == 2
             assert len(aimooc_payload["course_plan"]["modules"]) == 2
@@ -472,6 +506,8 @@ def main() -> None:
                 desired_minutes=4,
                 target_slide_count=12,
                 preferred_slide_style="clean beamer academic deck",
+                agentic_framework="openclaw_adapter",
+                avatar_mode="presenter_card",
             )
             task = {
                 "id": task_id,
@@ -481,6 +517,9 @@ def main() -> None:
                 "desired_minutes": payload.desired_minutes,
                 "target_slide_count": payload.target_slide_count,
                 "preferred_slide_style": payload.preferred_slide_style,
+                "agentic_framework": payload.agentic_framework,
+                "avatar_mode": payload.avatar_mode,
+                "avatar_position": payload.avatar_position,
                 "upload_id": upload_id,
                 "upload_name": upload_payload["file_name"],
                 "upload_path": upload_payload["saved_path"],
@@ -489,6 +528,9 @@ def main() -> None:
                 "steps": build_steps(payload, load_settings()),
             }
             initialize_task_runtime(task)
+            command = build_pipeline_command(task)
+            assert "--avatar_mode" in command
+            assert "presenter_card" in command
             task["status"] = "running"
             task["job"]["state"] = "running"
             apply_pipeline_event(task, {"kind": "start", "step": "mineru_ocr", "message": "MinerU OCR started.", "data": {}})
@@ -497,6 +539,37 @@ def main() -> None:
             task["status"] = "completed"
             task["job"]["state"] = "completed"
             write_task(task)
+
+            rendered_aimooc = client.post(
+                "/api/aimooc/projects",
+                json={
+                    "sources": [
+                        {"source_id": upload_id, "role": "primary", "priority": 1, "title": "Primary source"},
+                        {"source_id": upload_id_2, "role": "reference", "priority": 3, "title": "Reference source"},
+                    ],
+                    "course_title": "Rendered AIMOOC Test Course",
+                    "audience": "engineering students",
+                    "learning_objectives": ["Understand source material", "Build lessons"],
+                    "requirements": "Create a rendered test course.",
+                    "total_minutes": 12,
+                    "module_count": 1,
+                    "lessons_per_module": 1,
+                    "preferred_style": "teaching_walkthrough",
+                    "language": "zh-TW",
+                    "difficulty": "intermediate",
+                    "include_quizzes": True,
+                    "include_avatar": True,
+                    "avatar_mode": "presenter_card",
+                    "agentic_framework": "openclaw_adapter",
+                    "render_videos": True,
+                    "lesson_video_task_id": task_id,
+                },
+            )
+            assert rendered_aimooc.status_code == 200, rendered_aimooc.text
+            rendered_payload = rendered_aimooc.json()
+            aimooc_project_ids.append(rendered_payload["project_id"])
+            assert rendered_payload["framework"] == "openclaw_adapter"
+            assert any("avatar_video.mp4" in lesson.get("artifacts", []) for lesson in rendered_payload["package_manifest"]["lessons"])
 
             task_response = client.get(f"/api/tasks/{task_id}")
             assert task_response.status_code == 200
@@ -563,8 +636,8 @@ def main() -> None:
             if str(payload.get("file_name", "")).startswith("batch_"):
                 for upload_file in (ROOT / "web" / "data" / "uploads").glob(f"{payload.get('id')}.*"):
                     upload_file.unlink(missing_ok=True)
-        if aimooc_project_id:
-            project_dir = ROOT / "result" / "aimooc_projects" / aimooc_project_id
+        for project_id in aimooc_project_ids:
+            project_dir = ROOT / "result" / "aimooc_projects" / project_id
             if project_dir.exists():
                 shutil.rmtree(project_dir)
             db_path = ROOT / "web" / "data" / "aimooc.sqlite3"
@@ -572,9 +645,9 @@ def main() -> None:
                 import sqlite3
 
                 with sqlite3.connect(db_path) as conn:
-                    conn.execute("DELETE FROM aimooc_feedback WHERE project_id=?", (aimooc_project_id,))
-                    conn.execute("DELETE FROM aimooc_versions WHERE project_id=?", (aimooc_project_id,))
-                    conn.execute("DELETE FROM aimooc_projects WHERE project_id=?", (aimooc_project_id,))
+                    conn.execute("DELETE FROM aimooc_feedback WHERE project_id=?", (project_id,))
+                    conn.execute("DELETE FROM aimooc_versions WHERE project_id=?", (project_id,))
+                    conn.execute("DELETE FROM aimooc_projects WHERE project_id=?", (project_id,))
                     conn.commit()
         speech_skills_path.write_bytes(speech_skills_bytes)
         if fixture_dir.exists():

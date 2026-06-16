@@ -103,8 +103,8 @@ def script_budget_node(state: PacingGraphState) -> PacingGraphState:
     title_words = 48
     # SpeechAgent keeps F5TTS at natural speed and adapts duration by script
     # budget, not by forcing slow synthesis.
-    target_total_words = int(clamp(target_seconds * 1.50, 260, 1080))
-    words_per_slide = int(clamp(math.floor((target_total_words - title_words) / content_slides), 22, 58))
+    target_total_words = int(clamp(target_seconds * 1.70, 260, 1700))
+    words_per_slide = int(clamp(math.floor((target_total_words - title_words) / content_slides), 22, 78))
     return {
         "visited": ["ScriptAgent"],
         "tool_calls": ["ScriptAgent.assign_slide_word_budget"],
@@ -167,7 +167,7 @@ def build_adaptive_pacing_plan(
         total_slides = choose_total_slides(desired_minutes, requested_total_slides)
         content_slides = max(1, total_slides - 2)
         target_seconds = float(max(60, int(desired_minutes) * 60))
-        target_total_words = int(clamp(target_seconds * 1.50, 260, 1080))
+        target_total_words = int(clamp(target_seconds * 1.70, 260, 1700))
         result = {
             **initial,
             "visited": ["PacingSupervisorAgent", "PlannerAgent", "ScriptAgent", "SpeechAgent", "SubtitleAgent"],
@@ -185,7 +185,7 @@ def build_adaptive_pacing_plan(
             "content_slides": content_slides,
             "target_total_words": target_total_words,
             "title_words": 48,
-            "words_per_slide": int(clamp(math.floor((target_total_words - 48) / content_slides), 22, 58)),
+            "words_per_slide": int(clamp(math.floor((target_total_words - 48) / content_slides), 22, 78)),
             "voice_speed": 1.0,
             "sentence_pause": 0.0,
             "subtitle_source": "asr",
@@ -393,7 +393,7 @@ def agentic_graph_status(agents_path: Path, tools_path: Path) -> dict[str, Any]:
             "aimooc": {
                 "agents": AIMOOC_FLOW,
                 "edges": aimooc_graph_edges(),
-                "frameworks": ["langgraph", "hermes_adapter"],
+                "frameworks": ["langgraph", "hermes_adapter", "openclaw_adapter"],
             },
         },
         "entrypoint": "SupervisorAgent",
