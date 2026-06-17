@@ -115,8 +115,6 @@ The `/aimooc` page exposes this course-level render in the Active Package panel.
 
 ## Avatar and Talking-Head Integration
 
-The avatar layer follows Paper2Video's module separation: slides, subtitles, speech, cursor, and base video are rendered first; presenter media is added after that merge step. Paper2Video's public README describes the full path as LaTeX paper sources plus reference image/audio, then Slides -> Subtitles -> Speech -> Cursor -> Talking Head -> Merge, with Hallo2 as the documented talking-head backend.
-
 This repository supports:
 
 - `presenter_card`: stable local overlay using `web/avatar/kafka.jpg`.
