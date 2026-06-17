@@ -192,6 +192,8 @@ Cursor overlay does not require a repository image asset. `src/cursor_overlay.py
 
 The requested duration is treated as a pacing target, not a hard fill requirement; outputs may finish up to about one minute short to preserve natural speech. A LangGraph pacing planner chooses final slide count, content-slide budget, per-slide word budget, F5TTS speed policy, and subtitle source. If the user selects 12 slides, the pipeline targets 12 final Beamer pages including title and roadmap. F5TTS now runs at natural speed with one synthesis call per slide, matching the earlier stable voice behavior and avoiding artificial pauses around punctuation, hyphenated terms, or acronyms. Duration is controlled by agent-assigned script budget instead of slowing the synthesizer or padding silence. Long talks raise the script word budget so the narration reaches the target by adding natural teaching context, not by stretching audio. ScriptAgent expands short narration with varied academic bridge sentences and avoids repeated checklist openers. Burned-in subtitles are generated from a WhisperX ASR pass over the generated audio when available, then widened and held through each slide's narration window so spoken words and visible subtitles stay aligned.
 
+Narration mode is explicit. Single-PDF runs use `--narration_mode paper`, so generated scripts use presentation/paper wording and avoid course-only phrases such as "at this point in the lesson." AIMOOC multi-source runs call the same renderer with `--narration_mode course`, so lesson wording is allowed only for teaching-video packages.
+
 ## Run Web UI
 
 ```powershell

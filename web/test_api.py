@@ -200,6 +200,7 @@ parser.add_argument("--ollama_url", default="")
 parser.add_argument("--temperature", default="")
 parser.add_argument("--top_p", default="")
 parser.add_argument("--mineru_method", default="")
+parser.add_argument("--narration_mode", default="")
 args = parser.parse_args()
 result = Path(args.result_dir)
 result.mkdir(parents=True, exist_ok=True)
@@ -364,6 +365,25 @@ def main() -> None:
             intro_speaker = expand_speaker_text("", "Introduction", ["CLIP aligns images and text", "uncurated noisy internet data"], 6, 42)
             assert "Start by noting that" in intro_speaker
             assert bad_main not in intro_speaker
+            fallback_paper_speaker = expand_speaker_text(
+                "",
+                "Background",
+                ["multi-source synthesis across uploaded papers", "source conflict handling"],
+                15,
+                74,
+                narration_mode="paper",
+            )
+            assert "lesson" not in fallback_paper_speaker.lower()
+            assert "presentation" in fallback_paper_speaker.lower()
+            fallback_course_speaker = expand_speaker_text(
+                "",
+                "Background",
+                ["multi-source synthesis across uploaded papers", "source conflict handling"],
+                15,
+                74,
+                narration_mode="course",
+            )
+            assert "lesson" in fallback_course_speaker.lower()
             intro_slide = {"title": "Introduction: The Rise of Multimodal Models", "bullets": ["CLIP aligns images and text", "Trained on web-scale pairs"]}
             bad_equation = {"id": "equation_01", "kind": "equation", "caption": "sim_before", "body": "sim_before", "image": "eq.jpg"}
             bad_logo = {"id": "image_01", "kind": "image", "caption": "OCR image from page 11 university logo", "body": "", "image": "logo.jpg"}

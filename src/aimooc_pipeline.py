@@ -114,6 +114,8 @@ def run_course_video_pipeline(
         str(top_p),
         "--mineru_method",
         "ocr",
+        "--narration_mode",
+        "course",
     ]
     if spec.target_slide_count:
         command.extend(["--target_slides", str(spec.target_slide_count)])

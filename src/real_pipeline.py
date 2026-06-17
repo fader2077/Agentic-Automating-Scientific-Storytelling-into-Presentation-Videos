@@ -872,7 +872,7 @@ def natural_followup_sentences(slide_title: str, bullets: list[str], desired_min
     ]
 
 
-def teaching_context_sentences(slide_title: str, bullets: list[str]) -> list[str]:
+def teaching_context_sentences(slide_title: str, bullets: list[str], narration_mode: str = "paper") -> list[str]:
     title = re.sub(r"\s+", " ", slide_title).strip()
     clean_bullets = [re.sub(r"\s+", " ", item).strip().rstrip(".") for item in bullets if item.strip()]
     first = clean_bullets[0].lower() if clean_bullets else "the central claim"
@@ -903,11 +903,35 @@ def teaching_context_sentences(slide_title: str, bullets: list[str]) -> list[str
             f"A careful reader should ask whether {first} and {second} would still hold under a stronger setting.",
             f"That gives the ending a concrete research direction rather than only a summary of the slide deck.",
         ]
+    if narration_mode == "course":
+        return [
+            f"At this point in the lesson, the important move is to connect {first} with the slide title.",
+            f"That connection helps the audience understand why {second} is not just a detail but part of the argument.",
+            f"The next slide can then build on this idea without reintroducing the same background again.",
+        ]
     return [
-        f"At this point in the lesson, the important move is to connect {first} with the slide title.",
-        f"That connection helps the audience understand why {second} is not just a detail but part of the argument.",
-        f"The next slide can then build on this idea without reintroducing the same background again.",
+        f"At this point in the presentation, connect {first} with the slide title.",
+        f"That connection explains why {second} is part of the paper's argument rather than a separate detail.",
+        f"The next slide can then build on this idea without repeating the same background.",
     ]
+
+
+def sanitize_narration_mode_text(text: str, narration_mode: str = "paper") -> str:
+    if narration_mode == "course":
+        return text
+    replacements = {
+        r"\bat this point in the lesson\b": "at this point in the presentation",
+        r"\bthis lesson\b": "this presentation",
+        r"\bthe lesson\b": "the presentation",
+        r"\blesson\b": "presentation",
+        r"\bcourse sources\b": "paper sources",
+        r"\bcourse source\b": "paper source",
+        r"\bcourse\b": "paper",
+    }
+    cleaned = text
+    for pattern, replacement in replacements.items():
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def expand_speaker_text(
@@ -916,8 +940,10 @@ def expand_speaker_text(
     bullets: list[str],
     desired_minutes: int,
     words_per_slide: int | None = None,
+    narration_mode: str = "paper",
 ) -> str:
     speaker = re.sub(r"\s+", " ", speaker).strip()
+    speaker = sanitize_narration_mode_text(speaker, narration_mode)
     if not speaker:
         speaker = f"This slide explains {slide_title}."
     if not speaker.endswith((".", "!", "?")):
@@ -934,12 +960,12 @@ def expand_speaker_text(
         if word_count(speaker) + word_count(addition) <= target_words + 8:
             speaker = f"{speaker} {addition}"
     if word_count(speaker) < target_words:
-        for addition in teaching_context_sentences(slide_title, bullets):
+        for addition in teaching_context_sentences(slide_title, bullets, narration_mode=narration_mode):
             if word_count(speaker) >= target_words:
                 break
             if word_count(speaker) + word_count(addition) <= target_words + 12:
                 speaker = f"{speaker} {addition}"
-    return trim_speaker_text(speaker, target_words)
+    return trim_speaker_text(sanitize_narration_mode_text(speaker, narration_mode), target_words)
 
 
 def tts_pacing_for_minutes(desired_minutes: int, target_slides: int | None = None) -> dict[str, float]:
@@ -950,7 +976,7 @@ def tts_pacing_for_minutes(desired_minutes: int, target_slides: int | None = Non
     }
 
 
-def validate_plan(plan: dict[str, Any], desired_minutes: int, pacing_plan: dict[str, Any]) -> dict[str, Any]:
+def validate_plan(plan: dict[str, Any], desired_minutes: int, pacing_plan: dict[str, Any], narration_mode: str = "paper") -> dict[str, Any]:
     title = str(plan.get("title") or "Academic Paper Presentation").strip()
     authors = str(plan.get("authors") or "").strip()
     slides = plan.get("slides")
@@ -972,7 +998,14 @@ def validate_plan(plan: dict[str, Any], desired_minutes: int, pacing_plan: dict[
         if len(bullets) < 2:
             bullets.extend(["Core idea from the paper", "Why it matters for the result"])
         speaker = str(slide.get("speaker") or f"This slide explains {slide_title}.").strip()
-        speaker = expand_speaker_text(speaker, slide_title, bullets, desired_minutes, int(pacing_plan["words_per_slide"]))
+        speaker = expand_speaker_text(
+            speaker,
+            slide_title,
+            bullets,
+            desired_minutes,
+            int(pacing_plan["words_per_slide"]),
+            narration_mode=narration_mode,
+        )
         cursor_hint = str(slide.get("cursor_hint") or "main bullet list").strip()
         normalized.append(
             {
@@ -1013,6 +1046,7 @@ def validate_plan(plan: dict[str, Any], desired_minutes: int, pacing_plan: dict[
             bullets,
             desired_minutes,
             int(pacing_plan["words_per_slide"]),
+            narration_mode=narration_mode,
         )
         normalized.append(
             {
@@ -1812,7 +1846,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         temperature=args.temperature,
         top_p=args.top_p,
     )
-    plan = validate_plan(extract_json(raw_plan), args.desired_minutes, pacing_plan)
+    plan = validate_plan(extract_json(raw_plan), args.desired_minutes, pacing_plan, narration_mode=args.narration_mode)
     write_json(result_dir / "plan.json", plan)
     (result_dir / "ollama_plan_raw.txt").write_text(raw_plan, encoding="utf-8")
     metadata["steps"]["ollama_plan"] = {"seconds": round(time.time() - t, 3), "slides": len(plan["slides"]) + 1}
@@ -1961,6 +1995,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--mineru_method", default="ocr", choices=["ocr", "txt", "auto"])
+    parser.add_argument("--narration_mode", default="paper", choices=["paper", "course"])
     parser.add_argument("--ref_audio", default=str(ROOT / "assets" / "demo" / "reference.wav"))
     parser.add_argument("--ref_text", default=None)
     parser.add_argument("--avatar_mode", default="none", choices=["none", "presenter_card"])
