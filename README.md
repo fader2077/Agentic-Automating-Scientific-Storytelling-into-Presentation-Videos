@@ -25,6 +25,7 @@ The single-PDF pipeline uses MinerU OCR, local Ollama planning, Beamer slides, F
 - Select `langgraph`, `hermes_adapter`, or `openclaw_adapter` from the UI without replacing the native LangGraph graph.
 - Add a presenter-card avatar overlay to the final single-PDF MP4 and to AIMOOC lesson videos. The default local avatar lookup path is `web/avatar/kafka.jpg`.
 - Generate a real AIMOOC teaching video directly from multiple selected PDF sources. The system merges selected PDFs into `source_bundle.pdf`, runs the real OCR-to-video pipeline, then attaches the resulting `video.mp4` and avatar-integrated `avatar_video.mp4` to lesson artifacts.
+- Review the generated multi-source course video directly in the `/aimooc` Active Package panel, including base MP4, slides, subtitles, script, `sat.json`, and run log links.
 
 ## Agents
 
@@ -83,6 +84,11 @@ result/aimooc_projects/<project_id>/
   agentic_trace.json
   avatar_config.json
   course_package_manifest.json
+  course_video_manifest.json
+  generated_course_video/
+    3_merage.mp4
+    sat.json
+    latex_proj/slides.pdf
   module_01_lesson_01/
     slides.json
     script.json
@@ -104,6 +110,8 @@ When `render_videos=true`, the AIMOOC API has two paths:
 2. If `lesson_video_task_id` is empty, it merges all selected PDF sources into `source_bundle.pdf` and runs `src/real_pipeline.py` on that multi-source bundle.
 
 The lesson package then writes both `video.mp4` and `avatar_video.mp4`, plus an `avatar_manifest.json` that records the source video, avatar image, backend, and position. The full course-level render metadata is stored in `course_video_manifest.json`.
+
+The `/aimooc` page exposes this course-level render in the Active Package panel. If `render_videos=true` and the completed-task selector is empty, the UI is not only packaging lesson JSON; it runs the multi-source PDF video path and returns clickable/previewable video artifacts.
 
 ## Avatar and Talking-Head Integration
 

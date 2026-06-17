@@ -39,7 +39,28 @@ const emptySpec = {
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const text = await response.text();
+    try {
+      const payload = JSON.parse(text);
+      const detail = payload.detail;
+      if (Array.isArray(detail)) {
+        throw new Error(
+          detail
+            .map((item) => {
+              const loc = Array.isArray(item?.loc) ? item.loc.join(".") : "";
+              return loc ? `${loc}: ${item?.msg || JSON.stringify(item)}` : item?.msg || JSON.stringify(item);
+            })
+            .join("\n"),
+        );
+      }
+      if (detail && typeof detail === "object") throw new Error(JSON.stringify(detail, null, 2));
+      throw new Error(detail || text);
+    } catch (err) {
+      if (err instanceof Error && err.message) throw err;
+      throw new Error(text);
+    }
+  }
   return response.json();
 }
 
@@ -200,6 +221,8 @@ function App() {
   }
 
   const lessons = activeProject?.package_manifest?.lessons || [];
+  const courseVideoArtifacts = activeProject?.course_video_artifacts || {};
+  const courseVideo = activeProject?.package_manifest?.course_video || null;
 
   return (
     <main className="min-h-screen bg-[#eef3f9] text-slate-900">
@@ -321,9 +344,12 @@ function App() {
             <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
               <label className="flex items-center gap-2 text-sm font-semibold">
                 <input type="checkbox" checked={spec.render_videos} onChange={(e) => setSpec({ ...spec, render_videos: e.target.checked })} />
-                Generate lesson video from selected source PDFs
+                Render video media for lessons
               </label>
-              <Field label="Completed video task">
+              <p className="mt-2 text-xs text-slate-500">
+                Leave the task selector empty to merge selected PDFs and run the full OCR-to-video pipeline. Choose a completed task only when reusing an existing single-PDF video.
+              </p>
+              <Field label="Video source mode">
                 <select
                   className="mt-2 w-full rounded-lg border border-slate-200 p-2"
                   value={spec.lesson_video_task_id}
@@ -370,6 +396,28 @@ function App() {
 
           {activeProject && (
             <Card icon={Boxes} title="Active Package" eyebrow="Artifacts">
+              {courseVideo && (
+                <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-sky-950">Multi-source course video</p>
+                      <p className="text-xs text-sky-700">
+                        {courseVideo.slide_count || "?"} slides | {Math.round(courseVideo.duration || 0)} seconds | {courseVideo.bundle?.source_count || 0} sources
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      {Object.entries(courseVideoArtifacts).map(([key, rel]) => (
+                        <a key={key} className="rounded-md bg-white px-2 py-1 font-semibold ring-1 ring-sky-200" href={`/api/aimooc/projects/${activeProject.project_id}/artifacts/${rel}`}>
+                          {key.replaceAll("_", " ")}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                  {courseVideoArtifacts.video && (
+                    <video className="mt-3 aspect-video w-full rounded-lg bg-black" controls preload="metadata" src={`/api/aimooc/projects/${activeProject.project_id}/artifacts/${courseVideoArtifacts.video}`} />
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
                 <a className="rounded-lg border border-slate-200 p-3 hover:bg-slate-50" href={`/api/aimooc/projects/${activeProject.project_id}/artifacts/course_plan.json`}>
                   course_plan.json

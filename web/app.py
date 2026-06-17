@@ -1486,10 +1486,22 @@ def get_aimooc_project(project_id: str) -> dict[str, Any]:
     result_dir = Path(row["result_dir"])
     package_path = result_dir / "course_package_manifest.json"
     course_plan_path = result_dir / "course_plan.json"
+    package_manifest = json.loads(package_path.read_text(encoding="utf-8")) if package_path.exists() else None
+    course_video_artifacts: dict[str, str] = {}
+    if package_manifest and package_manifest.get("course_video"):
+        root = result_dir.resolve()
+        for key in ("video", "slides_pdf", "slides_tex", "subtitles", "script", "sat", "run_log"):
+            value = package_manifest["course_video"].get(key)
+            if not value:
+                continue
+            path = Path(value).resolve()
+            if path.exists() and str(path).startswith(str(root)):
+                course_video_artifacts[key] = str(path.relative_to(root)).replace("\\", "/")
     return {
         **project_summary(row),
         "payload": payload,
-        "package_manifest": json.loads(package_path.read_text(encoding="utf-8")) if package_path.exists() else None,
+        "package_manifest": package_manifest,
+        "course_video_artifacts": course_video_artifacts,
         "course_plan": json.loads(course_plan_path.read_text(encoding="utf-8")) if course_plan_path.exists() else None,
     }
 

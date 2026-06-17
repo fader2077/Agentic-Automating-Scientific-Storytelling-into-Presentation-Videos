@@ -47,17 +47,21 @@ def run(cmd: list[str], cwd: Path | None = None, timeout: int | None = None) -> 
         cmd,
         cwd=str(cwd) if cwd else None,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         timeout=timeout,
     )
     if result.returncode != 0:
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
         raise PipelineError(
             "Command failed:\n"
             + " ".join(cmd)
             + "\nSTDOUT:\n"
-            + result.stdout[-4000:]
+            + stdout[-4000:]
             + "\nSTDERR:\n"
-            + result.stderr[-4000:]
+            + stderr[-4000:]
         )
     return result
 

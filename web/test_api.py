@@ -35,6 +35,7 @@ if "f5_tts.api" not in sys.modules:
     f5_api.F5TTS = F5TTSStub
     sys.modules["f5_tts"] = f5_pkg
     sys.modules["f5_tts.api"] = f5_api
+import web.app as web_app_module
 from web.app import (
     CreateTaskPayload,
     apply_pipeline_event,
@@ -553,16 +554,20 @@ def main() -> None:
             assert any("avatar_video.mp4" in lesson.get("artifacts", []) for lesson in multi_payload["lessons"])
 
 
+            upload_pdf = fixture_dir / "upload_primary.pdf"
+            upload_pdf_2 = fixture_dir / "upload_reference.pdf"
+            write_valid_pdf(upload_pdf, "Primary upload content for API generation.")
+            write_valid_pdf(upload_pdf_2, "Reference upload content for API generation.")
             upload = client.post(
                 "/api/upload",
-                files={"file": ("fixture.pdf", b"%PDF-1.4\n% fixture\n", "application/pdf")},
+                files={"file": ("fixture.pdf", upload_pdf.read_bytes(), "application/pdf")},
             )
             assert upload.status_code == 200
             upload_payload = upload.json()
             upload_id = upload_payload["id"]
             upload_2 = client.post(
                 "/api/upload",
-                files={"file": ("reference.pdf", b"%PDF-1.4\n% fixture 2\n", "application/pdf")},
+                files={"file": ("reference.pdf", upload_pdf_2.read_bytes(), "application/pdf")},
             )
             assert upload_2.status_code == 200
             upload_id_2 = upload_2.json()["id"]
@@ -703,6 +708,48 @@ def main() -> None:
             aimooc_project_ids.append(rendered_payload["project_id"])
             assert rendered_payload["framework"] == "openclaw_adapter"
             assert any("avatar_video.mp4" in lesson.get("artifacts", []) for lesson in rendered_payload["package_manifest"]["lessons"])
+
+            old_pipeline_script = web_app_module.PIPELINE_SCRIPT
+            web_app_module.PIPELINE_SCRIPT = fake_pipeline
+            try:
+                generated_aimooc = client.post(
+                    "/api/aimooc/projects",
+                    json={
+                        "sources": [
+                            {"source_id": upload_id, "role": "primary", "priority": 1, "title": "Primary source"},
+                            {"source_id": upload_id_2, "role": "reference", "priority": 3, "title": "Reference source"},
+                        ],
+                        "course_title": "Generated Multi Source Video Course",
+                        "audience": "engineering students",
+                        "learning_objectives": ["Synthesize multiple PDFs", "Generate a teaching video"],
+                        "requirements": "Run the multi-source PDF video path.",
+                        "total_minutes": 15,
+                        "module_count": 1,
+                        "lessons_per_module": 1,
+                        "target_slide_count": 22,
+                        "preferred_style": "teaching_walkthrough",
+                        "language": "zh-TW",
+                        "difficulty": "intermediate",
+                        "include_quizzes": True,
+                        "include_avatar": True,
+                        "avatar_mode": "presenter_card",
+                        "agentic_framework": "langgraph",
+                        "render_videos": True,
+                    },
+                )
+            finally:
+                web_app_module.PIPELINE_SCRIPT = old_pipeline_script
+            assert generated_aimooc.status_code == 200, generated_aimooc.text
+            generated_payload = generated_aimooc.json()
+            aimooc_project_ids.append(generated_payload["project_id"])
+            assert generated_payload["package_manifest"]["course_video"]["slide_count"] == 22
+            assert generated_payload["course_video_artifacts"]["video"].endswith("3_merage.mp4")
+            generated_video = client.get(
+                f"/api/aimooc/projects/{generated_payload['project_id']}/artifacts/{generated_payload['course_video_artifacts']['video']}"
+            )
+            assert generated_video.status_code == 200
+            assert generated_video.headers["content-type"].startswith("video/")
+            assert any("avatar_video.mp4" in lesson.get("artifacts", []) for lesson in generated_payload["package_manifest"]["lessons"])
 
             task_response = client.get(f"/api/tasks/{task_id}")
             assert task_response.status_code == 200

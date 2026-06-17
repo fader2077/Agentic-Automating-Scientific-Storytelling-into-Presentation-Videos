@@ -43,9 +43,27 @@ async function request(url, options = {}) {
   const response = await fetch(url, options);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.detail || `Request failed: ${response.status}`);
+    throw new Error(formatApiError(payload.detail, response.status));
   }
   return response.json();
+}
+
+function formatApiError(detail, status) {
+  if (!detail) return `Request failed: ${status}`;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const lines = detail.map((item) => {
+      if (typeof item === "string") return item;
+      const loc = Array.isArray(item?.loc) ? item.loc.join(".") : "";
+      const msg = item?.msg || JSON.stringify(item);
+      return loc ? `${loc}: ${msg}` : msg;
+    });
+    return lines.join("\n");
+  }
+  if (typeof detail === "object") {
+    return detail.message || detail.error || JSON.stringify(detail, null, 2);
+  }
+  return String(detail);
 }
 
 async function requestText(url) {
@@ -63,6 +81,14 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function asDisplayText(value, fallback = "") {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 function formToObject(form) {
@@ -330,9 +356,10 @@ function renderQueue(queue) {
     queueSummary.textContent = "Queue is idle.";
     return;
   }
-  const active = queue.active_task_id ? `Active ${queue.active_task_id}` : "No active job";
-  const pending = queue.queued_count ? `Queued ${queue.queued_count}` : "No queued jobs";
-  queueSummary.textContent = `${active} | ${pending} | Worker ${queue.worker_id}`;
+  const active = queue.active_task_id ? `Active ${String(queue.active_task_id).slice(0, 8)}` : "No active job";
+  const pending = Number(queue.queued_count || 0) > 0 ? `Queued ${queue.queued_count}` : "No queued jobs";
+  const worker = asDisplayText(queue.worker_id, "worker unavailable");
+  queueSummary.textContent = `${active} | ${pending} | Worker ${worker}`;
 }
 
 function renderTask(task) {
@@ -340,10 +367,10 @@ function renderTask(task) {
   const counts = task.progress_counts || { completed: 0, total: 0 };
   const currentStep = (task.current_step ?? -1) + 1;
   const totalSteps = (task.steps || []).length;
-  const queuePos = task.job?.queue_position ? `Queue ${task.job.queue_position}` : task.job?.state || "queued";
+  const queuePos = task.job?.queue_position ? `Queue ${task.job.queue_position}` : asDisplayText(task.job?.state, "queued");
   const slideTarget = task.target_slide_count ? ` | ${task.target_slide_count} slides` : "";
-  taskMeta.textContent = `${task.upload_name} | ${task.desired_minutes} min target${slideTarget} | Stage ${Math.max(currentStep, 0)} / ${totalSteps} | Count ${counts.completed} / ${counts.total} | ${queuePos}`;
-  taskStatusPill.textContent = task.status;
+  taskMeta.textContent = `${asDisplayText(task.upload_name, "uploaded source")} | ${asDisplayText(task.desired_minutes, "?")} min target${slideTarget} | Stage ${Math.max(currentStep, 0)} / ${totalSteps} | Count ${counts.completed} / ${counts.total} | ${queuePos}`;
+  taskStatusPill.textContent = asDisplayText(task.status, "idle");
   progressFill.style.width = `${Math.round((task.progress || 0) * 100)}%`;
   renderSteps(task.steps || []);
   taskLog.textContent = (task.log || []).join("\n");
